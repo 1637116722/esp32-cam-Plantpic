@@ -1,0 +1,16 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+.safe-top {
+    padding-top: env(safe-area-inset-top);
+}
+
+.safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Hide scrollbar for category filter */
+.overflow-x-auto::-webkit-scrollbar {
+    display: none;
+}
