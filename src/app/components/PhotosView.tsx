@@ -112,15 +112,72 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_INTERVAL, String(intervalMinutes));
+    // 同步設定到 Render 伺服器
+    fetch(`${CAM_BASE_URL}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ captureInterval: intervalMinutes * 60 })
+    }).catch(err => console.error("同步設定失敗:", err));
   }, [intervalMinutes]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_RETENTION, String(retentionHours));
+    // 同步設定到 Render 伺服器
+    fetch(`${CAM_BASE_URL}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ retentionHours: retentionHours })
+    }).catch(err => console.error("同步設定失敗:", err));
   }, [retentionHours]);
 
   const prune = (list: GalleryItem[]) => {
     const cutoff = Date.now() - retentionHours * 60 * 60 * 1000;
     return list.filter((x) => new Date(x.capturedAtIso).getTime() >= cutoff);
+  };
+
+  // 定時自動同步邏輯
+  const syncLatestPhoto = async (plantId?: string) => {
+    try {
+      // 1. 獲取伺服器最新資訊
+      const infoRes = await fetch(`${CAM_BASE_URL}/api/info`, { cache: "no-store" });
+      const info = await infoRes.json();
+      const lastUploadTime = info.lastUploadTime;
+      
+      if (!lastUploadTime) return;
+
+      // 2. 檢查手機相簿是否已經有這張照片 (比對時間戳)
+      // 我們使用 functional update 來獲取最新的 items 狀態
+      setItems((prev) => {
+        const isAlreadyInGallery = prev.some(item => item.capturedAtIso === lastUploadTime);
+        if (isAlreadyInGallery) return prev;
+
+        // 3. 如果是新照片，則下載並加入相簿
+        (async () => {
+          try {
+            const imageRes = await fetch(`${CAM_BASE_URL}/api/image?t=${Date.now()}`, { cache: "no-store" });
+            if (!imageRes.ok) return;
+
+            const blob = await imageRes.blob();
+            const dataUrl = await blobToDataUrl(blob);
+
+            const newItem: GalleryItem = {
+              id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+              capturedAtIso: lastUploadTime,
+              dataUrl,
+              plantId,
+            };
+            
+            setItems(current => [newItem, ...prune(current)]);
+          } catch (e) {
+            console.error("下載新照片失敗:", e);
+          }
+        })();
+
+        return prev; // 這裡先回傳舊的，等下載完後會透過內層的 setItems 更新
+      });
+    } catch (error) {
+      console.error("自動同步失敗:", error);
+    }
   };
 
   useEffect(() => {
@@ -158,30 +215,28 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
     const captureSeq = ++captureSeqRef.current;
 
     try {
-      const baseInfoRes = await fetch(`${CAM_BASE_URL}/api/info`, { cache: "no-store" });
-      const baseInfo = await baseInfoRes.json();
-      const baseUploadTime: string | null = baseInfo.lastUploadTime ?? null;
-
+      // 1. 發送拍照請求並獲得 requestId
       const requestRes = await fetch(`${CAM_BASE_URL}/api/request-photo`, { cache: "no-store" });
       const requestData = await requestRes.json();
       const requestId: string | null = requestData.requestId ?? null;
-      const requestTime: string | null = requestData.time ?? null;
+      
+      console.log(`已發送手動拍照請求，等待 ID: ${requestId}`);
 
-      while (captureSeqRef.current === captureSeq) {
+      // 2. 開始輪詢，直到看到這個 requestId
+      let attempts = 0;
+      const maxAttempts = 30; // 最多等 60 秒 (2s * 30)
+
+      while (captureSeqRef.current === captureSeq && attempts < maxAttempts) {
+        attempts++;
         const infoRes = await fetch(`${CAM_BASE_URL}/api/info`, { cache: "no-store" });
         const info = await infoRes.json();
         const lastUploadTime: string | null = info.lastUploadTime ?? null;
         const lastUploadRequestId: string | null = info.lastUploadRequestId ?? null;
 
-        const hasNewRequestedPhoto = (() => {
-          if (!lastUploadTime) return false;
-          if (baseUploadTime && lastUploadTime === baseUploadTime) return false;
-          if (requestId && lastUploadRequestId && lastUploadRequestId === requestId) return true;
-          if (requestTime) return new Date(lastUploadTime).getTime() >= new Date(requestTime).getTime();
-          return true;
-        })();
+        // 嚴格比對 requestId
+        const isMatched = requestId && lastUploadRequestId && lastUploadRequestId === requestId;
 
-        if (hasNewRequestedPhoto && lastUploadTime) {
+        if (isMatched && lastUploadTime) {
           const imageRes = await fetch(`${CAM_BASE_URL}/api/image?t=${Date.now()}`, { cache: "no-store" });
           if (!imageRes.ok) {
             await new Promise((r) => setTimeout(r, 2000));
@@ -189,13 +244,6 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
           }
 
           const blob = await imageRes.blob();
-          const hash = await hashBlob(blob);
-          if (hash && lastHashRef.current === hash) {
-            await new Promise((r) => setTimeout(r, 2000));
-            continue;
-          }
-
-          if (hash) lastHashRef.current = hash;
           const dataUrl = await blobToDataUrl(blob);
 
           const item: GalleryItem = {
@@ -212,8 +260,8 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
 
         await new Promise((r) => setTimeout(r, 2000));
       }
-    } catch {
-      setIsCapturing(false);
+    } catch (e) {
+      console.error("手動拍照失敗:", e);
     }
 
     setIsCapturing(false);
@@ -222,12 +270,16 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
   useEffect(() => {
     if (!selectedPlantId) return;
 
+    // 初始先同步一次
+    syncLatestPhoto(selectedPlantId);
+
+    // 改為使用同步邏輯，而不是每次都觸發拍照
     const timer = window.setInterval(() => {
-      captureOnce(selectedPlantId);
-    }, intervalMinutes * 60 * 1000);
+      syncLatestPhoto(selectedPlantId);
+    }, 10000); // 每 10 秒檢查一次是否有新照片 (比設定的刷新時間更頻繁地檢查，以確保即時同步)
 
     return () => window.clearInterval(timer);
-  }, [intervalMinutes, selectedPlantId]);
+  }, [selectedPlantId]);
 
   const clearAll = () => {
     setDeleteTarget({ id: selectedPlantId!, type: 'all' });
