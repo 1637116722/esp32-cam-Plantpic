@@ -7,7 +7,7 @@
     "build": "vite build",
     "dev": "vite",
     "dev:vercel": "vercel dev",
-    "start": "node esp32-cam-server/app.js"
+    "start": "cd esp32-cam-server && node app.js"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
