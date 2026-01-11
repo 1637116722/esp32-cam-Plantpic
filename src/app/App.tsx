@@ -681,14 +681,15 @@ export default function App() {
                             </div>
                         ) : (
                             <>
-                                <div className="safe-top">
-                                    <TopLabelHeader title={
-                                        activeTab === "journal" ? "日誌" :
-                                        activeTab === "search" ? "搜尋" :
-                                        activeTab === "photos" ? "相簿" :
-                                        activeTab === "moments" ? "時光" : ""
-                                    } onBack={activeTab !== "journal" && activeTab !== "search" && activeTab !== "photos" ? () => setActiveTab("home") : undefined} />
-                                </div>
+                                {activeTab !== "photos" && (
+                                    <div className="safe-top">
+                                        <TopLabelHeader title={
+                                            activeTab === "journal" ? "日誌" :
+                                            activeTab === "search" ? "搜尋" :
+                                            activeTab === "moments" ? "時光" : ""
+                                        } onBack={activeTab !== "journal" && activeTab !== "search" ? () => setActiveTab("home") : undefined} />
+                                    </div>
+                                )}
                                 <div className={`flex-1 ${activeTab === "home" ? "overflow-y-auto" : "overflow-hidden flex flex-col"}`}>
                                     {activeTab === "search" ? (
                                         <SearchView />

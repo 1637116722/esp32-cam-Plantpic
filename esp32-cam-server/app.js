@@ -82,19 +82,29 @@ app.get('/api/check-request', (req, res) => {
 
   // 判斷是否觸發定時拍照
   let shouldAutoCapture = false;
+  let currentRequestId = null;
+
   if (secondsSinceLastAuto >= appSettings.captureInterval) {
     shouldAutoCapture = true;
     lastAutoCaptureTime = now;
-    photoRequestId = `auto-${now}`; // 給定時拍照一個 ID
+    currentRequestId = `auto-${now}`;
   }
 
-  if (photoRequestTime || shouldAutoCapture) {
+  // 優先處理手動拍照請求
+  if (photoRequestTime) {
+    currentRequestId = photoRequestId;
     res.json({ 
       shouldCapture: true, 
-      requestId: photoRequestId 
+      requestId: currentRequestId 
     });
-    photoRequestTime = null; // 處理完後重置
+    photoRequestTime = null; 
     photoRequestId = null;
+  } else if (shouldAutoCapture) {
+    console.log(`觸發自動定時拍照，requestId=${currentRequestId}`);
+    res.json({ 
+      shouldCapture: true, 
+      requestId: currentRequestId 
+    });
   } else {
     res.json({ shouldCapture: false, requestId: null });
   }

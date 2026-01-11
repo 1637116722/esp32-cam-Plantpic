@@ -14,6 +14,9 @@ const char* password = "0956883808";
 // =========================== 
 const char* baseUrl = "https://esp32-cam-relay-oqmh.onrender.com";
 
+int wifiFailureCount = 0;
+const int maxWifiFailures = 3; // 連接失敗 3 次後自動重啟
+
 // ===========================
 // ESP32-CAM 引腳定義 (AI-THINKER 模組)
 // ===========================
@@ -77,18 +80,49 @@ void setup() {
   }
 
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  Serial.print("Connecting to WiFi");
+  int setupRetry = 0;
+  while (WiFi.status() != WL_CONNECTED && setupRetry < 40) { // 最多等 20 秒
     delay(500);
     Serial.print(".");
+    setupRetry++;
   }
-  Serial.println("\nWiFi connected");
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected");
+  } else {
+    Serial.println("\nWiFi connection failed in setup, will retry in loop");
+  }
 }
 
 // 建議每 10 秒執行一次輪詢
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\nWiFi 斷開，正在嘗試重新連接...");
+    WiFi.disconnect();
     WiFi.begin(ssid, password);
-    return;
+    
+    int retryCount = 0;
+    while (WiFi.status() != WL_CONNECTED && retryCount < 20) {
+      delay(500);
+      Serial.print(".");
+      retryCount++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi 已重新連接");
+      wifiFailureCount = 0; // 重置失敗計數
+    } else {
+      wifiFailureCount++;
+      Serial.printf("\nWiFi 連接失敗 (%d/%d)\n", wifiFailureCount, maxWifiFailures);
+      
+      if (wifiFailureCount >= maxWifiFailures) {
+        Serial.println("多次連接失敗，正在重啟 ESP32...");
+        delay(1000);
+        ESP.restart();
+      }
+      return;
+    }
   }
 
   // 1. 檢查伺服器是否有拍照請求 (包含手動刷新與自動排程)
