@@ -493,7 +493,7 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
           {/* 中間彈窗容器：包裹照片、資訊與按鈕，點擊內部不關閉 */}
           <div className="flex-1 flex flex-col items-center justify-center">
             <div 
-              className="w-full max-w-[240px] flex flex-col items-center" 
+              className="w-full max-w-[300px] flex flex-col items-center px-4" 
               onClick={e => e.stopPropagation()}
             >
               {/* 照片 */}
