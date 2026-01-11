@@ -70,10 +70,10 @@ const PlantCard = React.memo(function PlantCard({ plant: p, bgColor, onClick }: 
         className="aspect-[4/3] relative flex items-center justify-center overflow-hidden bg-gray-100"
         style={{ transform: 'translate3d(0,0,0)' }}
       >
-        {/* 主要封面圖片 - 優先顯示 ESP32 最新拍照，若無則顯示原始封面 */}
-        {(p.latestEspPhoto || p.imageUrl) ? (
+        {/* 主要封面圖片 - 始終顯示原始封面圖 */}
+        {p.imageUrl ? (
           <img
-            src={p.latestEspPhoto || p.imageUrl || ''}
+            src={p.imageUrl}
             alt={p.name}
             loading="lazy"
             decoding="async"
