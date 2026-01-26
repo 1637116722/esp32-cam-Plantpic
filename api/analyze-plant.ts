@@ -1,109 +1,86 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
+/**
+ * 植物養護建議 API (Gemini 版)
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { imageUrl, plantName, species, currentMoisture } = req.body;
-  if (!plantName && !species) {
-    return res.status(400).json({ error: "plantName or species is required" });
-  }
+  const { plantName, species, currentMoisture, imageUrl } = req.body;
+  const geminiKey = process.env.GEMINI_API_KEY;
 
-  const apiKey = process.env.HUGGING_FACE_API_KEY || process.env.VITE_HUGGING_FACE_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: "Hugging Face API Key is missing on server" });
+  if (!geminiKey) {
+    return res.status(500).json({ error: "Gemini API Key is missing on server" });
   }
 
   try {
-    const targetPlant = species || plantName;
-    const label = targetPlant;
-    const confidence = 1.0;
-    const method = "name-based-analysis";
-    let analysis = null;
+    const genAI = new GoogleGenerativeAI(geminiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    let base64Data = "";
+    let mimeType = "image/jpeg";
+
+    if (imageUrl && imageUrl.startsWith("http")) {
+      const imgRes = await fetch(imageUrl);
+      const arrayBuffer = await imgRes.arrayBuffer();
+      base64Data = Buffer.from(arrayBuffer).toString("base64");
+      mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+    } else if (imageUrl) {
+      base64Data = imageUrl.includes(",") ? imageUrl.split(",")[1] : imageUrl;
+      mimeType = imageUrl.includes("data:") ? imageUrl.split(";")[0].split(":")[1] : "image/jpeg";
+    }
+
+    const prompt = `你是一位資深植物專家。
+    請根據以下資訊提供一份「精簡」的養護報告：
+    植物：${species || plantName}
+    目前濕度：${currentMoisture}%
+    
+    要求：
+    1. 必須使用繁體中文回覆。
+    2. 回傳格式為純 JSON：
+    {
+      "analysis": "Markdown 格式報告",
+      "moisture": "建議濕度%",
+      "sunlight": "建議日照時間"
+    }
+    3. 報告總字數 150 字以內。
+    4. 不要包含任何開場白或解釋，只回傳 JSON。`;
+
+    const parts: any[] = [prompt];
+    if (base64Data) {
+      parts.push({
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType,
+        },
+      });
+    }
+
+    const result = await model.generateContent(parts);
+    const response = await result.response;
+    const text = response.text();
+
+    let finalResult = {
+      analysis: "分析暫時不可用",
+      moisture: "50%",
+      sunlight: "4小時"
+    };
 
     try {
-      const moistureInfo = currentMoisture !== undefined ? `目前花盆濕度數值為：${currentMoisture}%。` : "";
-      const messages = [
-        {
-          role: "system",
-          content: `你是一位植物專家。請針對植物品種提供養護指南。要求：
-1. 標頭首行必須顯示「品種：[植物名稱]」。
-2. 使用繁體中文。
-3. 內容需包含：🌿日照（具體建議時數）、💧濕度（包含環境濕度建議與針對當前數值的評價）、📝重點。
-4. 特別注意：如果提供當前濕度數值，請判斷該數值對於該植物是否合適（如：太乾、太濕或剛好），並給出具體建議。
-5. 保持精簡但專業。`
-        },
-        {
-          role: "user",
-          content: `請分析「${targetPlant}」並提供養護重點。${moistureInfo}`
-        }
-      ];
-
-      const llmResult = await callHFChatModel(
-        "Qwen/Qwen2.5-7B-Instruct",
-        apiKey,
-        {
-          messages,
-          temperature: 0.6,
-          max_tokens: 500
-        }
-      );
-
-      analysis = llmResult.choices?.[0]?.message?.content || "";
-    } catch (e: any) {
-      console.error("LLM Error:", e);
-      return res.status(200).json({ 
-        success: false, 
-        error: `AI 服務回傳錯誤: ${e.message || "未知錯誤"}` 
-      });
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        finalResult = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      console.log("Gemini JSON Parse failed, using raw text");
+      finalResult.analysis = text;
     }
 
-    if (!analysis) {
-      return res.status(200).json({
-        success: false,
-        analysis: null,
-        error: "AI 未能生成回應，請稍後再試。"
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      analysis: analysis,
-      targetPlant: targetPlant
-    });
-
+    return res.status(200).json(finalResult);
   } catch (error: any) {
-    console.error("Analysis Error:", error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message || 'Gemini analysis failed' });
   }
-}
-
-async function callHFChatModel(modelId: string, apiKey: string, payload: any): Promise<any> {
-  const fullUrl = `https://router.huggingface.co/v1/chat/completions`;
-  
-  const body = {
-    model: modelId,
-    ...payload
-  };
-
-  const fetchModel = async () => {
-    return await fetch(fullUrl, {
-      headers: { 
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-  };
-
-  let response = await fetchModel();
-  let result = await response.json().catch(() => ({ error: "Failed to parse JSON" }));
-
-  if (!response.ok) {
-    throw new Error(result.error?.message || result.error || `HF chat model failed with status ${response.status}`);
-  }
-
-  return result;
 }

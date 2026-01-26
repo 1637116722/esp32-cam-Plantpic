@@ -2,7 +2,7 @@ import TimeWeatherHeader from "./components/TimeWeatherHeader";
 import BottomNavigation from "./components/BottomNavigation";
 import TopLabelHeader from "./components/TopLabelHeader";
 import BlankView from "./components/BlankView";
-import SearchView from "./components/SearchView";
+import SearchView, { type Msg } from "./components/SearchView";
 import JournalView from "./components/JournalView";
 import PhotosView from "./components/PhotosView";
 import PlantGrid, { type PlantItem } from "./components/PlantGrid";
@@ -35,6 +35,7 @@ export interface WeatherData {
     low: number;
     condition: string;
     humidity?: number;
+    lastUpdated?: number; // 新增：上次更新的時間戳
 }
 
 export default function App() {
@@ -51,7 +52,8 @@ export default function App() {
     useEffect(() => {
         const checkStatus = async () => {
             try {
-                const res = await fetch('https://esp32-cam-relay-oqmh.onrender.com/api/info', { cache: 'no-store' });
+                const res = await fetch(`https://esp32-cam-relay-oqmh.onrender.com/api/info?t=${Date.now()}`, { cache: 'no-store' });
+                if (!res.ok) throw new Error('Network response was not ok');
                 const data = await res.json();
                 
                 // 實時偵測邏輯：
@@ -91,8 +93,9 @@ export default function App() {
                 try {
                     const items = JSON.parse(raw);
                     const latest: Record<string, string> = {};
-                    // 由舊到新遍歷，後面的會覆蓋前面的，確保留住最新的一張
-                    items.forEach((it: any) => {
+                    // 因為 items 是 [新...舊] 排序，我們從後往前遍歷，
+                    // 這樣後面的（較新的）會覆蓋前面的（較舊的），最終留住最新的一張
+                    [...items].reverse().forEach((it: any) => {
                         if (it.plantId) {
                             latest[it.plantId] = it.dataUrl;
                         }
@@ -105,7 +108,62 @@ export default function App() {
         };
 
         loadLatestPhotos();
-        
+
+        // 背景同步最新照片 (當 App 開啟時，即使不在相簿頁也自動下載最新一張)
+        const backgroundSync = async () => {
+            // 找出所有有 cameraId 的植物
+            const camPlants = plants.filter(p => p.cameraId);
+            if (camPlants.length === 0) return;
+
+            try {
+                const infoRes = await fetch('https://esp32-cam-relay-oqmh.onrender.com/api/info', { cache: 'no-store' });
+                const info = await infoRes.json();
+                const lastUploadTime = info.lastUploadTime;
+                if (!lastUploadTime) return;
+
+                // 檢查是否已經在相簿中
+                const raw = localStorage.getItem("photo_gallery_items_v1");
+                const items = raw ? JSON.parse(raw) : [];
+                const isAlreadyInGallery = items.some((it: any) => it.capturedAtIso === lastUploadTime);
+                
+                if (!isAlreadyInGallery) {
+                    console.log("發現新照片，正在背景下載...");
+                    const imageRes = await fetch(`https://esp32-cam-relay-oqmh.onrender.com/api/image?t=${Date.now()}`, { cache: 'no-store' });
+                    if (imageRes.ok) {
+                        const blob = await imageRes.blob();
+                        const dataUrl = await new Promise<string>((resolve) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result as string);
+                            reader.readAsDataURL(blob);
+                        });
+
+                        // 假設最新照片屬於第一個有相機的植物 (目前邏輯)
+                        const targetPlantId = camPlants[0].id;
+                        const newItem = {
+                            id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+                            capturedAtIso: lastUploadTime,
+                            dataUrl,
+                            plantId: targetPlantId
+                        };
+
+                        // 保存到 localStorage
+                        const updatedItems = [newItem, ...items].slice(0, 100); // 限制數量
+                        localStorage.setItem("photo_gallery_items_v1", JSON.stringify(updatedItems));
+                        
+                        // 觸發更新
+                        loadLatestPhotos();
+                        window.dispatchEvent(new CustomEvent('gallery-updated'));
+                    }
+                }
+            } catch (e) {
+                console.error("Background photo sync failed", e);
+            }
+        };
+
+        // 每 30 秒在背景同步一次
+        const syncTimer = setInterval(backgroundSync, 30000);
+        backgroundSync(); // 初始執行一次
+
         // 監聽存儲變化
         const handleStorage = (e: StorageEvent) => {
             if (e.key === "photo_gallery_items_v1") {
@@ -121,8 +179,9 @@ export default function App() {
         return () => {
             window.removeEventListener('storage', handleStorage);
             window.removeEventListener('gallery-updated', handleUpdate);
+            clearInterval(syncTimer);
         };
-    }, []);
+    }, [plants]); // 依賴 plants 以獲取最新的 camPlants
 
     // 增強 plants 資料，加入最新照片與連線狀態
     const augmentedPlants = useMemo(() => {
@@ -196,7 +255,8 @@ export default function App() {
                         high: Math.round(data.daily.temperature_2m_max[0]),
                         low: Math.round(data.daily.temperature_2m_min[0]),
                         condition: mapWeatherCode(data.current.weather_code),
-                        humidity: Math.round(data.current.relative_humidity_2m)
+                        humidity: Math.round(data.current.relative_humidity_2m),
+                        lastUpdated: Date.now()
                     });
                 }
             }
@@ -209,26 +269,23 @@ export default function App() {
                 high: isWinter ? 22 : 28,
                 low: isWinter ? 14 : 20,
                 condition: '晴朗',
-                humidity: 60
+                humidity: 60,
+                lastUpdated: Date.now()
             });
         } finally {
             setIsWeatherLoading(false);
         }
     };
 
-    // 初始與定時獲取天氣
+    // 初始與定時獲取天氣 (每 5 分鐘刷新一次)
     useEffect(() => {
         fetchWeather();
-        const timer = setInterval(fetchWeather, 30 * 60 * 1000);
+        const timer = setInterval(fetchWeather, 5 * 60 * 1000);
         return () => clearInterval(timer);
     }, []);
 
-    // 當回到主頁或植物詳情關閉時，刷新天氣以保持一致
-    useEffect(() => {
-        if (activeTab === "home" && selectedPlant === null) {
-            fetchWeather();
-        }
-    }, [activeTab, selectedPlant === null]);
+    // 移除原有的：當回到主頁或植物詳情關閉時，刷新天氣以保持一致
+    // (因為使用者反應不要一直刷新)
 
     // 日誌紀錄狀態
     const [historyRecords, setHistoryRecords] = useState<JournalRecord[]>(() => {
@@ -246,6 +303,11 @@ export default function App() {
 
     // 通知狀態
     const [notifications, setNotifications] = useState<ToastMessage[]>([]);
+
+    // 對話紀錄狀態 (僅存在記憶體中，刷新頁面即重置)
+    const [chatMessages, setChatMessages] = useState<Msg[]>([
+        { role: "assistant", text: "你好，我是植物照護助手。你可以問我任何關於植物栽培、澆水、光照、土壤、施肥等問題。" },
+    ]);
 
     // 背景監控植物狀態並同步日誌
     useEffect(() => {
@@ -509,7 +571,9 @@ export default function App() {
 
     const updatePlant = useCallback((updatedPlant: PlantItem) => {
         setPlants(prev => prev.map(p => p.id === updatedPlant.id ? updatedPlant : p));
-        setSelectedPlant(updatedPlant);
+        // 只有當原本就在詳情頁面時，才同步更新詳情頁面的選中狀態
+        // 這樣可以避免從搜尋頁面背景更新時，意外觸發跳轉
+        setSelectedPlant(prev => (prev && prev.id === updatedPlant.id) ? updatedPlant : prev);
     }, []);
 
     const deletePlant = useCallback((id: string) => {
@@ -548,29 +612,7 @@ export default function App() {
         setSelectedPlant(null); // 切換分頁時，自動關閉植物詳情頁面
     };
 
-    // 優化 Header 渲染，避免不必要的重新渲染
-    const memoizedHeader = useMemo(() => (
-        (activeTab === "home" || selectedPlant) && (
-            <div 
-                className="absolute top-0 left-0 z-30 w-full overflow-visible pointer-events-none"
-                style={{ 
-                    height: `${headerHeight}px`,
-                    willChange: 'height'
-                }}
-            >
-                <TimeWeatherHeader 
-                    showMiniCharacter 
-                    modelPath="/plant.glb" 
-                    externalWeather={weather}
-                    isExternalLoading={isWeatherLoading}
-                    customHeight={headerHeight}
-                    customScale={headerScale}
-                    selectedPlant={selectedPlant}
-                    plants={plants}
-                />
-            </div>
-        )
-    ), [headerHeight, headerScale, weather, isWeatherLoading, selectedPlant, plants, activeTab]);
+    const isHeaderVisible = activeTab === "home" || selectedPlant !== null;
 
     return (
         <div className="w-full h-screen flex justify-center items-center" style={{ backgroundColor: theme.bg }}>
@@ -590,8 +632,9 @@ export default function App() {
           aspect-[9/19.5]
           h-full
           max-h-screen
-          max-w-md
+          max-w-[430px]
           w-full
+          px-2
           "
                 style={{ backgroundColor: theme.bg }}
             >
@@ -623,7 +666,26 @@ export default function App() {
 
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
                         {/* 全域 Header - 確保人物與溫度不重新載入 */}
-                        {memoizedHeader}
+                        <div 
+                            className="absolute top-0 left-0 z-30 w-full overflow-visible pointer-events-none transition-opacity duration-300"
+                            style={{ 
+                                height: `${headerHeight}px`,
+                                opacity: isHeaderVisible ? 1 : 0,
+                                visibility: isHeaderVisible ? 'visible' : 'hidden',
+                                willChange: 'height, opacity'
+                            }}
+                        >
+                            <TimeWeatherHeader 
+                                showMiniCharacter 
+                                modelPath="/plant.glb" 
+                                externalWeather={weather}
+                                isExternalLoading={isWeatherLoading}
+                                customHeight={headerHeight}
+                                customScale={headerScale}
+                                selectedPlant={selectedPlant}
+                                plants={plants}
+                            />
+                        </div>
 
                         {selectedPlant ? (
                             <PlantDetailView 
@@ -658,7 +720,7 @@ export default function App() {
                                                 onCategoryChange={setSelectedCategory}
                                             />
                                             
-                                            <div className="flex justify-end pr-6 mt-2 mb-4">
+                                            <div className="flex justify-end pr-0 mt-2 mb-4">
                                                 <button
                                                     className="px-4 py-2.5 rounded-full bg-[#6FCF97] text-white text-sm font-bold shadow-[0_8px_20px_rgba(111,207,151,0.2)] hover:bg-[#5bbd85] transition-all active:scale-95 flex items-center gap-2"
                                                     onClick={() => setIsAddDialogOpen(true)}
@@ -692,7 +754,12 @@ export default function App() {
                                 )}
                                 <div className={`flex-1 ${activeTab === "home" ? "overflow-y-auto" : "overflow-hidden flex flex-col"}`}>
                                     {activeTab === "search" ? (
-                                        <SearchView />
+                                        <SearchView 
+                                            plants={augmentedPlants} 
+                                            messages={chatMessages} 
+                                            onMessagesChange={setChatMessages} 
+                                            onUpdatePlant={updatePlant}
+                                        />
                                     ) : activeTab === "journal" ? (
                                         <JournalView plants={augmentedPlants} historyRecords={historyRecords} />
                                     ) : activeTab === "photos" ? (

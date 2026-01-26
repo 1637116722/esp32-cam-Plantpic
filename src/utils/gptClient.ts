@@ -3,7 +3,7 @@ export type ChatMessage = { role: "system" | "user" | "assistant"; content: stri
 export async function askPlantGPT(messages: ChatMessage[]) {
   try {
     const payload = {
-      messages: messages.filter(m => m.role !== "system").map(m => ({
+      messages: messages.map(m => ({
         role: m.role,
         content: m.content,
       })),

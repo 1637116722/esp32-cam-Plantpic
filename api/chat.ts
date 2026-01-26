@@ -1,52 +1,73 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
+/**
+ * 植物對話 API (Gemini 版)
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
-    return res.status(405).end();
+    return res.status(405).json({ error: "Method not allowed" });
   }
-  const { messages, type } = req.body;
-  
+
+  const { messages } = req.body;
+  const geminiKey = process.env.GEMINI_API_KEY;
+
+  if (!geminiKey) {
+    return res.status(200).json({ text: "Gemini API 金鑰未設定，請聯繫管理員。" });
+  }
+
   try {
-    const token = process.env.HUGGING_FACE_API_KEY;
-    if (!token) {
-      return res.status(200).json({ text: "Hugging Face API 金鑰未設定。" });
-    }
+    const genAI = new GoogleGenerativeAI(geminiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-    // 使用 Qwen2.5 以獲得更穩定的中文回覆
-    const model = type === 'vision' 
-      ? "meta-llama/Llama-3.2-11B-Vision-Instruct" 
-      : "Qwen/Qwen2.5-7B-Instruct";
-
-    const body = {
-      model,
-      messages: type === 'vision' ? messages : [
-        {
-          role: "system",
-          content: "你是專注植物栽培與照護的助手。回答必須使用繁體中文，且內容具體、可操作。若問題不屬於植物照護，請簡短說明你僅回覆植物相關問題。",
-        },
-        ...messages,
-      ],
-      temperature: 0.7,
-      max_tokens: 500,
-    };
-
-    const r = await fetch(`https://router.huggingface.co/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await r.json().catch(() => null);
-    if (!r.ok) {
-      return res.status(200).json({ text: "否", error: data?.error });
-    }
+    const systemMsg = "你是專注植物栽培與照護的助手。回答必須使用繁體中文，且內容具體、可操作。當被詢問濕度或健康度時，請務必提供具體的數值百分比。若問題不屬於植物照護，請簡短說明你僅回覆植物相關問題。";
     
-    const text = data?.choices?.[0]?.message?.content || "";
-    res.status(200).json({ text: text.trim() });
-  } catch (err) {
-    res.status(200).json({ text: "否" });
+    const userMessages = messages?.filter((m: any) => m.role !== 'system') || [];
+    const lastMsg = userMessages[userMessages.length - 1];
+    
+    let parts: any[] = [systemMsg];
+
+    if (lastMsg) {
+      if (typeof lastMsg.content === 'string') {
+        parts.push(`使用者問題：${lastMsg.content}`);
+      } else if (Array.isArray(lastMsg.content)) {
+        // 處理多模態訊息 (vision)
+        for (const part of lastMsg.content) {
+          if (part.type === 'text') {
+            parts.push(part.text);
+          } else if (part.type === 'image_url' && part.image_url?.url) {
+            const imageUrl = part.image_url.url;
+            let base64Data = "";
+            let mimeType = "image/jpeg";
+
+            if (imageUrl.startsWith("http")) {
+              const imgRes = await fetch(imageUrl);
+              const arrayBuffer = await imgRes.arrayBuffer();
+              base64Data = Buffer.from(arrayBuffer).toString("base64");
+              mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+            } else {
+              base64Data = imageUrl.includes(",") ? imageUrl.split(",")[1] : imageUrl;
+              mimeType = imageUrl.includes("data:") ? imageUrl.split(";")[0].split(":")[1] : "image/jpeg";
+            }
+
+            parts.push({
+              inlineData: {
+                data: base64Data,
+                mimeType: mimeType,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    const result = await model.generateContent(parts);
+    const response = await result.response;
+    const text = response.text();
+
+    return res.status(200).json({ text: text || "抱歉，我現在無法回答這個問題。" });
+  } catch (error: any) {
+    console.error("Chat API Error (Gemini):", error);
+    return res.status(500).json({ text: `發生錯誤：${error.message}` });
   }
 }

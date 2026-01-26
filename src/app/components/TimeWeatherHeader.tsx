@@ -17,6 +17,7 @@ interface TimeWeatherHeaderProps {
     high: number;
     low: number;
     condition: string;
+    lastUpdated?: number;
   } | null;
   isExternalLoading?: boolean;
 }
@@ -40,6 +41,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
     high: number;
     low: number;
     condition: string;
+    lastUpdated?: number;
   } | null>(null); 
   const [isInternalLoading, setIsInternalLoading] = useState(true); 
 
@@ -51,6 +53,13 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
   const [timeSeed, setTimeSeed] = useState( 
     Math.floor(Date.now() / (5 * 60 * 1000)) 
   ); 
+
+  // 當天氣更新時，同步更新對話種子
+  useEffect(() => {
+    if (weather?.lastUpdated) {
+      setTimeSeed(Math.floor(weather.lastUpdated / (5 * 60 * 1000)));
+    }
+  }, [weather?.lastUpdated]);
 
   /* ---------- Scale related ---------- */ 
   const scrollProgress = useMemo( 
@@ -64,12 +73,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
   ); 
 
   /* ---------- Time seed ---------- */ 
-  useEffect(() => { 
-    const t = setInterval(() => { 
-      setTimeSeed(Math.floor(Date.now() / (5 * 60 * 1000))); 
-    }, 60000); 
-    return () => clearInterval(t); 
-  }, []); 
+  // 已移至與天氣同步，不再定時刷新
 
   /* ---------- Night check ---------- */ 
   useEffect(() => { 
@@ -123,11 +127,9 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
     timeSeed 
   ]); 
 
-  /* ---------- Lock suggestion ---------- */ 
-  const stableSuggestion = useRef(aiSuggestion); 
-  useEffect(() => { 
-    stableSuggestion.current = aiSuggestion; 
-  }, [aiSuggestion]); 
+  /* ---------- Animation Control ---------- */
+  // 保持人物始終活躍，不再根據滑動暫停
+  const isCharacterActive = true;
 
   /* ---------- Weather fetch ---------- */ 
   useEffect(() => { 
@@ -224,11 +226,11 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
               backfaceVisibility: 'hidden'
             }}
           >
-            <Character3D modelPath={modelPath} />
+            <Character3D modelPath={modelPath} isActive={isCharacterActive} />
             
             {/* AI Suggestion Bubble - Improved Mobile Version */}
             <AnimatePresence mode="wait">
-              {stableSuggestion.current && (
+              {aiSuggestion && (
                 <motion.div 
                   key={selectedPlant ? selectedPlant.id : 'home'}
                   initial={{ opacity: 0, scale: 0.8, y: 20 }}
@@ -237,7 +239,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
                   transition={{ duration: 0.4, ease: "easeOut" }}
                   className="absolute left-1/2 top-0 max-w-[180px] w-fit px-2 z-30" 
                   style={{ 
-                    x: `${10 - (scrollProgress * 20)}%`,
+                    x: `${20 - (scrollProgress * 15)}%`,
                     y: `${-scrollProgress * 95 + 35}%`,
                     scale: inverseScale,
                     transformOrigin: 'left bottom',
@@ -260,7 +262,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
                       <div className="w-1 h-1 rounded-full bg-green-400/40 animate-pulse" />
                     </div>
                     <p className="text-[13px] font-semibold text-green-900/90 leading-relaxed">
-                      {stableSuggestion.current}
+                      {aiSuggestion}
                     </p>
                     
                     {/* Bubble tail - Arrow pointing to character */}

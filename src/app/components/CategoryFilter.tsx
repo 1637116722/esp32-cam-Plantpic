@@ -46,9 +46,8 @@ export default React.memo(function CategoryFilter({
   };
 
   return (
-    <div className="w-full px-0 -mt-10 mb-2 overflow-visible relative z-30">
-      {/* 減少容器高度並保持 overflow-visible，同時使用 -mt-10 向上移動 */}
-      <div className="relative h-[160px] flex items-center overflow-visible">
+    <div className="w-full px-0 -mt-4 mb-2 overflow-visible relative z-30">
+      <div className="relative h-[130px] flex items-center overflow-visible">
         <div
           ref={scrollRef}
           onMouseDown={handleMouseDown}
@@ -56,14 +55,18 @@ export default React.memo(function CategoryFilter({
           onMouseUp={handleMouseUp}
           onMouseMove={handleMouseMove}
           className={`
-            flex gap-5 overflow-x-auto h-full items-center px-2 py-4
+            flex gap-5 overflow-x-auto h-full items-center px-6 py-5
             ${isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'}
             scrollbar-hide
           `}
           style={{ 
             scrollbarWidth: 'none', 
             msOverflowStyle: 'none',
-            WebkitOverflowScrolling: 'touch'
+            WebkitOverflowScrolling: 'touch',
+            paddingTop: '20px',
+            paddingBottom: '20px',
+            marginRight: '-24px',
+            marginLeft: '-24px'
           }}
         >
           {categories.map((category) => {

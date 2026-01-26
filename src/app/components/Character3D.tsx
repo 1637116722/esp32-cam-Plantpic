@@ -8,10 +8,17 @@ import { getTimeTheme } from "../../utils/timeTheme";
 
 interface Character3DProps {
     modelPath: string;
+    isActive?: boolean;
 }
 
-export const Character3D = memo(function Character3D({ modelPath }: Character3DProps) {
+export const Character3D = memo(function Character3D({ modelPath, isActive = true }: Character3DProps) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const isActiveRef = useRef(isActive);
+
+    // 同步 isActive 到 ref
+    useEffect(() => {
+        isActiveRef.current = isActive;
+    }, [isActive]);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -248,6 +255,7 @@ export const Character3D = memo(function Character3D({ modelPath }: Character3DP
         let animationId = 0;
         const animate = () => {
             animationId = requestAnimationFrame(animate);
+            
             const t = clock.getElapsedTime();
             group.position.y = baseY + Math.sin(t) * 0.05;
             const delta = clock.getDelta();

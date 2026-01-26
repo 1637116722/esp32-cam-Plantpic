@@ -1,10 +1,11 @@
 import 'dotenv/config'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, type Plugin, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { GoogleGenerativeAI } from "@google/generative-ai"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -41,6 +42,133 @@ const plantChatApiPlugin: Plugin = {
       }
     })
 
+    server.middlewares.use('/api/identify-plant', async (req, res, next) => {
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.end()
+        return
+      }
+      try {
+        const env = loadEnv('', process.cwd(), '')
+        let raw = ''
+        req.on('data', (chunk) => (raw += chunk))
+        await new Promise<void>((resolve) => req.on('end', () => resolve()))
+
+        let payload
+        try {
+          payload = JSON.parse(raw || '{}')
+        } catch {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: 'Invalid JSON payload' }))
+          return
+        }
+
+        const { imageUrl, moisture, plantName, species } = payload
+        if (!imageUrl) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: 'imageUrl is required' }))
+          return
+        }
+
+        const geminiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY
+        res.setHeader('Content-Type', 'application/json')
+
+        if (!geminiKey) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Gemini API Key is missing (Local)' }))
+          return
+        }
+
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+        let base64Data = "";
+        let mimeType = "image/jpeg";
+
+        if (imageUrl.startsWith("http")) {
+          const imgRes = await fetch(imageUrl);
+          const arrayBuffer = await imgRes.arrayBuffer();
+          base64Data = Buffer.from(arrayBuffer).toString("base64");
+          mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+        } else {
+          base64Data = imageUrl.includes(',') ? imageUrl.split(',')[1] : imageUrl;
+          mimeType = imageUrl.includes('data:') ? imageUrl.split(';')[0].split(':')[1] : 'image/jpeg';
+        }
+
+        const prompt = `你是一位資深的植物學家與植保專家。
+        請分析這張植物照片，並結合以下資訊：
+        - 使用者提供的植物名稱：${plantName || "未提供"}
+        - 可能的品種：${species || "未知"}
+        - 目前環境濕度：${moisture || "未知"}%
+
+        請執行以下任務：
+        1. 辨識植物品種（如果使用者提供的名稱不準確，請更正）。
+        2. 評估植物的健康狀態。
+        3. 如果有病徵，請識別病名、原因及提供救治建議。
+        4. 計算一個 0-100 的健康分數 (healthScore)。
+
+        請務必以繁體中文回覆，且格式必須為純 JSON，不得包含任何 Markdown 標記或開場白：
+        {
+          "isHealthy": boolean,
+          "healthScore": number,
+          "species": "辨識出的植物品種名稱",
+          "label": "主要狀態或病徵名稱",
+          "diseases": [
+            {
+              "name": "病徵名稱",
+              "probability": 0.xx,
+              "cause": "病因分析",
+              "treatment": {
+                "biological": ["物理或生物防治方法"],
+                "chemical": ["建議藥劑"],
+                "prevention": ["預防措施"]
+              }
+            }
+          ],
+          "advice": "總體建議 (Markdown 格式)"
+        }
+        
+        注意：如果植物非常健康，diseases 陣列可以為空，但 label 應設為 \"健康\"。`;
+
+        const result = await model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType,
+            },
+          },
+        ]);
+
+        const response = await result.response;
+        const text = response.text();
+        
+        let finalData;
+        try {
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            finalData = JSON.parse(jsonMatch[0]);
+          } else {
+            throw new Error("Could not find JSON in Gemini response");
+          }
+        } catch (e) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: "Gemini 回傳格式錯誤" }));
+          return;
+        }
+
+        res.statusCode = 200
+        res.end(JSON.stringify({
+          success: true,
+          ...finalData
+        }))
+
+      } catch (err: any) {
+        res.statusCode = 500
+        res.end(JSON.stringify({ success: false, error: err.message }))
+      }
+    })
+
     server.middlewares.use('/api/analyze-plant', async (req, res, next) => {
       if (req.method !== 'POST') {
         res.statusCode = 405
@@ -51,67 +179,107 @@ const plantChatApiPlugin: Plugin = {
         let raw = ''
         req.on('data', (chunk) => (raw += chunk))
         await new Promise<void>((resolve) => req.on('end', () => resolve()))
-        const { imageUrl, plantName, species, currentMoisture, dailyStandard } = JSON.parse(raw || '{}')
-        
-        const token = process.env.HUGGING_FACE_API_KEY || process.env.VITE_HUGGING_FACE_API_KEY
-        res.setHeader('Content-Type', 'application/json')
-        
-        if (!token) {
-          res.statusCode = 200
-          res.end(JSON.stringify({ error: 'API Key missing' }))
+
+        let payload
+        try {
+          payload = JSON.parse(raw || '{}')
+        } catch (e) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: 'Invalid JSON payload' }))
           return
         }
 
-        const targetPlant = species || plantName || 'Unknown Plant'
+        const { plantName, species, currentMoisture, imageUrl, healthAnalysis } = payload
+        const env = loadEnv('', process.cwd(), '')
+        const geminiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY
+        res.setHeader('Content-Type', 'application/json')
 
-        // LLM Analysis
-        const modelId = "Qwen/Qwen2.5-7B-Instruct"
-        const moistureInfo = currentMoisture !== undefined ? `目前花盆濕度數值為：${currentMoisture}%。` : "";
-        const standardInfo = dailyStandard ? `今日養護標準為：建議濕度 ${dailyStandard.moisture}，建議日照 ${dailyStandard.sunlight}。` : "";
-        
-        const body = {
-          model: modelId,
-          messages: [
-            {
-              role: "system",
-              content: `你是一位植物專家。請針對植物品種提供養護指南。要求：
-1. 標頭首行必須顯示「品種：[植物名稱]」。
-2. 使用繁體中文。
-3. 內容需包含：🌿日照（根據今日標準給出具體建議）、💧濕度（根據今日標準評價當前數值）、📝重點。
-4. 特別注意：請嚴格參考提供的「今日養護標準」來評價當前狀態。
-5. 保持精簡但專業。`
+        if (!geminiKey) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Gemini API Key is missing (Local)' }))
+          return
+        }
+
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+        let base64Data = "";
+        let mimeType = "image/jpeg";
+
+        if (imageUrl && imageUrl.startsWith("http")) {
+          const imgRes = await fetch(imageUrl);
+          const arrayBuffer = await imgRes.arrayBuffer();
+          base64Data = Buffer.from(arrayBuffer).toString("base64");
+          mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+        } else if (imageUrl) {
+          base64Data = imageUrl.includes(",") ? imageUrl.split(",")[1] : imageUrl;
+          mimeType = imageUrl.includes("data:") ? imageUrl.split(";")[0].split(":")[1] : "image/jpeg";
+        }
+
+        let prompt = "";
+        if (healthAnalysis) {
+          prompt = `資深植物專家報告：
+          植物：${species || plantName}，濕度：${currentMoisture}%
+          診斷：${JSON.stringify(healthAnalysis)}
+          
+          Markdown 格式章節（嚴格遵守）：
+          1. 🌿 植物現狀評估
+          2. 💧 水分管理建議
+          3. ☀️ 光照與環境
+          4. 🏥 專業診斷與處方
+          5. 💡 專家小叮嚀
+
+          要求：繁體中文，純 JSON：
+          {
+            "analysis": "Markdown 報告",
+            "moisture": "建議濕度%",
+            "sunlight": "建議日照時間"
+          }
+          不要開場白。`;
+        } else {
+          prompt = `精簡養護報告 (150字內)：
+          植物：${species || plantName}，濕度：${currentMoisture}%
+          繁體中文，純 JSON：
+          {
+            "analysis": "Markdown 報告",
+            "moisture": "建議濕度%",
+            "sunlight": "建議日照時間"
+          }
+          不要開場白。`;
+        }
+
+        const parts: any[] = [prompt];
+        if (base64Data) {
+          parts.push({
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType,
             },
-            {
-              role: "user",
-              content: `請分析「${targetPlant}」並提供養護重點。${moistureInfo} ${standardInfo}`
-            }
-          ],
-          temperature: 0.6,
-          max_tokens: 500
+          });
         }
 
-        const llmResp = await fetch('https://router.huggingface.co/v1/chat/completions', {
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          method: 'POST',
-          body: JSON.stringify(body),
-        })
-        let llmResult = await llmResp.json().catch(() => ({ error: 'Failed to parse JSON' }))
+        const result = await model.generateContent(parts);
+        const response = await result.response;
+        const text = response.text();
 
-        if (!llmResp.ok) {
-          throw new Error(llmResult.error?.message || llmResult.error || `HF chat model failed with status ${llmResp.status}`)
+        let finalResult = {
+          analysis: text || "分析暫時不可用",
+          moisture: "50%",
+          sunlight: "4小時"
         }
 
-        const analysis = llmResult.choices?.[0]?.message?.content
-
-        if (!analysis) {
-          throw new Error('AI returned empty response')
-        }
+        try {
+          const jsonMatch = text.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            finalResult = JSON.parse(jsonMatch[0])
+          }
+        } catch (e) {}
 
         res.statusCode = 200
-        res.end(JSON.stringify({ success: true, analysis, targetPlant }))
+        res.end(JSON.stringify(finalResult))
       } catch (err: any) {
-        res.statusCode = 200
-        res.end(JSON.stringify({ success: false, error: err.message || 'Analysis failed locally' }))
+        res.statusCode = 500
+        res.end(JSON.stringify({ error: err.message || 'Gemini analysis failed' }))
       }
     })
 
@@ -125,63 +293,59 @@ const plantChatApiPlugin: Plugin = {
         let raw = ''
         req.on('data', (chunk) => (raw += chunk))
         await new Promise<void>((resolve) => req.on('end', () => resolve()))
-        const { plantName, species, weather } = JSON.parse(raw || '{}')
         
-        const token = process.env.HUGGING_FACE_API_KEY || process.env.VITE_HUGGING_FACE_API_KEY
+        let payload;
+        try {
+          payload = JSON.parse(raw || '{}');
+        } catch (e) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Invalid JSON payload' }));
+          return;
+        }
+        
+        const { plantName, species, weather } = payload;
+        const env = loadEnv('', process.cwd(), '')
+        const geminiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY
         res.setHeader('Content-Type', 'application/json')
         
-        if (!token) {
-          res.statusCode = 200
-          res.end(JSON.stringify({ error: 'API Key missing' }))
+        if (!geminiKey) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Gemini API Key is missing (Local)' }))
           return
         }
+
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         const targetPlant = species || plantName || 'Unknown Plant'
         const weatherInfo = weather ? `當前天氣：${weather.condition}，溫度：${weather.temp}°C (最高 ${weather.high}°C / 最低 ${weather.low}°C)。` : "當前天氣：晴朗，溫度：25°C。";
 
-        const body = {
-          model: "Qwen/Qwen2.5-7B-Instruct",
-          messages: [
-            {
-              role: "system",
-              content: `你是一位植物養護專家。請根據當前的天氣狀況，為特定植物提供今日的「建議濕度」與「建議日照時間」。
-要求：
-1. 回傳 JSON 格式：{"moisture": "xx%", "sunlight": "x小時"}。
-2. 考慮天氣對植物的影響（例如：天氣熱且晴朗，日照時間應適中但需注意防曬，濕度需求可能增加）。
-3. 只回傳 JSON 字串，不要有其他文字。`
-            },
-            {
-              role: "user",
-              content: `植物：${targetPlant}。${weatherInfo}`
-            }
-          ],
-          temperature: 0.4,
-          max_tokens: 100
-        }
+        const prompt = `植物專家：請給予建議。
+        植物：${targetPlant}
+        ${weatherInfo}
+        要求：純 JSON，繁體中文，無贅字：
+        {
+          "moisture": "xx%",
+          "sunlight": "x小時"
+        }`;
 
-        const llmResp = await fetch('https://router.huggingface.co/v1/chat/completions', {
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          method: 'POST',
-          body: JSON.stringify(body),
-        })
-        let llmResult = await llmResp.json()
-        const content = llmResult.choices?.[0]?.message?.content
-        
-        // 嘗試解析 JSON
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+
         let careData = { moisture: "50%", sunlight: "4小時" }
         try {
-          const jsonMatch = content.match(/\{.*\}/s)
+          const jsonMatch = text.match(/\{[\s\S]*\}/)
           if (jsonMatch) {
             careData = JSON.parse(jsonMatch[0])
           }
-        } catch (e) {
-          console.error("Failed to parse AI daily care JSON:", content)
-        }
+        } catch (e) {}
 
         res.statusCode = 200
         res.end(JSON.stringify({ success: true, ...careData }))
       } catch (err: any) {
-        res.statusCode = 200
+        res.statusCode = 500
+        res.setHeader('Content-Type', 'application/json')
         res.end(JSON.stringify({ success: false, error: err.message }))
       }
     })
@@ -196,94 +360,110 @@ const plantChatApiPlugin: Plugin = {
         let raw = ''
         req.on('data', (chunk) => (raw += chunk))
         await new Promise<void>((resolve) => req.on('end', () => resolve()))
-        const payload = JSON.parse(raw || '{}') as {
-          messages?: Array<{ role: 'user' | 'assistant'; content: string }>
+        
+        let payload;
+        try {
+          payload = JSON.parse(raw || '{}') as {
+            messages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+          };
+        } catch (e) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: 'Invalid JSON payload' }));
+          return;
         }
-        const token =
-          process.env.HUGGING_FACE_API_KEY ||
-          process.env.VITE_HUGGING_FACE_API_KEY
-        const model =
-          process.env.HUGGING_FACE_MODEL || 'meta-llama/Llama-3.1-8B-Instruct'
+
+        const env = loadEnv('', process.cwd(), '')
+        const geminiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY
         res.setHeader('Content-Type', 'application/json')
-        if (!token) {
-          res.statusCode = 200
-          res.end(
-            JSON.stringify({
-              text:
-                'HUGGING_FACE_API_KEY 未設定，請在專案根目錄 .env 加入 HUGGING_FACE_API_KEY=你的金鑰，然後重新啟動開發伺服器。',
-            }),
-          )
+
+        if (!geminiKey) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ text: 'Gemini API Key 未設定，請在 .env 加入金鑰。' }))
           return
         }
-        const body = {
-          model,
-          messages: [
-            {
-              role: 'system',
-              content:
-                '你是專注植物栽培與照護的助手。回答必須具體、可操作，必要時提供數值範圍。僅回覆植物相關問題。',
-            },
-            ...((payload.messages || []).map((m) => ({
-              role: m.role,
-              content: m.content,
-            })) as Array<{ role: 'user' | 'assistant'; content: string }>),
-          ],
-          temperature: 0.3,
-          top_p: 0.9,
-          max_tokens: 500,
+
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+        const systemMsg = payload.messages?.find(m => m.role === 'system')?.content || 
+                         '你是專注植物栽培與照護的助手。回答必須使用繁體中文，且內容具體、可操作。當被詢問濕度或健康度時，請務必提供具體的數值百分比。若問題不屬於植物照護，請簡短說明你僅回覆植物相關問題。';
+        
+        const userMessages = payload.messages?.filter(m => m.role !== 'system') || [];
+        const lastMsg = userMessages[userMessages.length - 1];
+        
+        let parts: any[] = [systemMsg];
+
+        if (lastMsg) {
+          if (typeof lastMsg.content === 'string') {
+            parts.push(`使用者問題：${lastMsg.content}`);
+          } else if (Array.isArray(lastMsg.content)) {
+            // 處理多模態訊息 (vision)
+            for (const part of (lastMsg.content as any[])) {
+              if (part.type === 'text') {
+                parts.push(part.text);
+              } else if (part.type === 'image_url' && part.image_url?.url) {
+                const imageUrl = part.image_url.url;
+                let base64Data = "";
+                let mimeType = "image/jpeg";
+
+                if (imageUrl.startsWith("http")) {
+                  const imgRes = await fetch(imageUrl);
+                  const arrayBuffer = await imgRes.arrayBuffer();
+                  base64Data = Buffer.from(arrayBuffer).toString("base64");
+                  mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+                } else {
+                  base64Data = imageUrl.includes(",") ? imageUrl.split(",")[1] : imageUrl;
+                  mimeType = imageUrl.includes("data:") ? imageUrl.split(";")[0].split(":")[1] : "image/jpeg";
+                }
+
+                parts.push({
+                  inlineData: {
+                    data: base64Data,
+                    mimeType: mimeType,
+                  },
+                });
+              }
+            }
+          }
         }
-        const r = await fetch('https://router.huggingface.co/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-        })
-        const data = await r.json().catch(() => null)
-        if (!r.ok) {
-          const errMsg =
-            typeof data?.error === 'string' ? data.error : 'Hugging Face API error'
-          res.statusCode = 200
-          res.end(JSON.stringify({ text: errMsg }))
-          return
-        }
-        const text =
-          data?.choices?.[0]?.message?.content ||
-          data?.choices?.[0]?.delta?.content ||
-          ''
+
+        const result = await model.generateContent(parts);
+        const response = await result.response;
+        const text = response.text();
+
         res.statusCode = 200
-        res.end(JSON.stringify({ text: text || '暫無回覆，請稍後再試。' }))
-      } catch (err) {
-        res.statusCode = 200
-        res.end(
-          JSON.stringify({
-            text:
-              '後端處理失敗，請確認 .env 的 HUGGING_FACE_API_KEY 是否正確以及模型是否可用。',
-          }),
-        )
+        res.end(JSON.stringify({ text: text || "抱歉，我現在無法回答這個問題。" }))
+      } catch (err: any) {
+        res.statusCode = 500
+        res.end(JSON.stringify({ text: `發生錯誤：${err.message}` }))
       }
     })
   },
-}
+};
 
-export default defineConfig({
-  plugins: [
-    // The React and Tailwind plugins are both required for Make, even if
-    // Tailwind is not being actively used – do not remove them
-    react(),
-    tailwindcss(),
-    plantChatApiPlugin,
-  ],
-  resolve: {
-    alias: {
-      // Alias @ to the src directory
-      '@': path.resolve(__dirname, './src'),
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  // 將環境變數注入 process.env 供後端中間件使用
+  process.env.GEMINI_API_KEY = env.GEMINI_API_KEY
+
+  return {
+    plugins: [
+      // The React and Tailwind plugins are both required for Make, even if
+      // Tailwind is not being actively used – do not remove them
+      react(),
+      tailwindcss(),
+      plantChatApiPlugin,
+    ],
+    resolve: {
+      alias: {
+        // Alias @ to the src directory
+        '@': path.resolve(__dirname, './src'),
+      },
+      dedupe: ['react', 'react-dom', 'three'],
     },
-    dedupe: ['react', 'react-dom', 'three'],
-  },
-  optimizeDeps: {
-    include: ['three', '@react-three/fiber', '@react-three/drei'],
-    exclude: [],
-  },
+    optimizeDeps: {
+      include: ['three', '@react-three/fiber', '@react-three/drei'],
+      exclude: [],
+    },
+  }
 })

@@ -10,6 +10,17 @@ export interface PlantItem {
   health?: number;   // 0-100
   type: 'indoor' | 'outdoor';
   aiAnalysis?: string; // 儲存 AI 分析結果
+  healthAnalysis?: {
+    isHealthy: boolean;
+    diseases?: Array<{
+      name: string;
+      probability: number;
+      description?: string;
+      cause?: string;
+      watering?: string;
+      treatment?: any;
+    }>;
+  }; // 儲存從 Gemini AI 獲取的健康分析結果數據
   cameraId?: string;   // ESP32-CAM 的 ID 或網址
   isConnected?: boolean; // 新增：ESP32 的連線狀態
   latestEspPhoto?: string; // 新增：最新的 ESP32 拍照
@@ -17,6 +28,7 @@ export interface PlantItem {
     moisture: string;
     sunlight: string;
     lastUpdated: string; // ISO date string YYYY-MM-DD
+    lastUpdatedTs?: number; // 新增：上次更新的時間戳
   };
 }
 
@@ -70,7 +82,7 @@ const PlantCard = React.memo(function PlantCard({ plant: p, bgColor, onClick }: 
         className="aspect-[4/3] relative flex items-center justify-center overflow-hidden bg-gray-100"
         style={{ transform: 'translate3d(0,0,0)' }}
       >
-        {/* 主要封面圖片 - 始終顯示原始封面圖 */}
+        {/* 主要圖片：主頁卡片顯示原始封面圖 */}
         {p.imageUrl ? (
           <img
             src={p.imageUrl}
@@ -131,8 +143,8 @@ const PlantCard = React.memo(function PlantCard({ plant: p, bgColor, onClick }: 
 
 export default React.memo(function PlantGrid({ plants, onPlantClick }: PlantGridProps) {
   return (
-    <div className="w-full px-6 pb-6 pt-4">
-      <div className="grid grid-cols-2 gap-4">
+    <div className="w-full px-0 pb-6 pt-4">
+      <div className="grid grid-cols-2 gap-3 px-3">
         {plants.map((p) => (
           <PlantCard 
             key={p.id} 

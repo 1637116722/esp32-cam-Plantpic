@@ -1,13 +1,13 @@
-#include "esp_camera.h"
+#include <esp_camera.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <ArduinoJson.h> // 需要安裝 ArduinoJson 函式庫
+#include <ArduinoJson.h>
 
 // ===========================
 // 1. 修改你的 WiFi 資訊
 // ===========================
-const char* ssid = "36-wifi";
-const char* password = "0956883808";
+const char* ssid = "H3C_2F801D";
+const char* password = "15063890008";
 
 // =========================== 
 // 2. 你的雲端伺服器網址 
