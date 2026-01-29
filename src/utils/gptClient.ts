@@ -1,3 +1,5 @@
+import { getApiUrl } from "./apiConfig";
+
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export async function askPlantGPT(messages: ChatMessage[]) {
@@ -8,12 +10,20 @@ export async function askPlantGPT(messages: ChatMessage[]) {
         content: m.content,
       })),
     };
-    const res = await fetch("/api/chat", {
+    
+     const apiUrl = getApiUrl('/api/chat');
+
+     const res = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) return null;
+    
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      console.error(`API Error (${apiUrl}):`, res.status, errorData);
+      return null;
+    }
     const data = await res.json();
     const text = data?.text ?? null;
     if (!text || typeof text !== "string") return null;
@@ -70,7 +80,9 @@ export async function verifyImageWithPlant(imageUrl: string, plantName: string):
   ];
 
   try {
-    const res = await fetch("/api/chat", {
+    const apiUrl = getApiUrl('/api/chat');
+
+    const res = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages, type: 'vision' }),

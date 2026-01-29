@@ -124,7 +124,7 @@ ${contextInfo}`,
       } else {
         onMessagesChange((m) => [
           ...m,
-          { role: "assistant", text: "抱歉，目前無法取得回覆。請確認：\n1）已在專案根目錄 .env 設定 GEMINI_API_KEY（或使用 vercel env add）\n2）使用 vercel login、vercel link 後執行 vercel dev\n3）/api/chat 正常可用（後端以 Gemini API 代理）" },
+          { role: "assistant", text: "抱歉，目前無法取得回覆。請確認：\n1）已在 Vercel 後台設定 GEMINI_API_KEY（如您的截圖所示）\n2）App 已正確連結至 https://plantalk-app.vercel.app\n3）網路連線正常" },
         ]);
       }
     },

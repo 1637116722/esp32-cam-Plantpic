@@ -1,0 +1,14 @@
+# 排除不需要上傳到 Vercel 的大型資料夾
+node_modules
+dist
+.vercel
+.DS_Store
+
+# 排除手機原生平台的專案檔 (Vercel 不需要這些)
+ios
+android
+
+# 排除其他無關資料夾
+Arduino程式
+esp32-cam-server
+guidelines

@@ -317,7 +317,7 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
   // 如果沒有選中植物，顯示植物列表
   if (!selectedPlantId) {
     return (
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-12">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-[calc(env(safe-area-inset-top)+2rem)]">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-10 h-10 rounded-2xl bg-white shadow-sm flex items-center justify-center border border-white/60">
             <Camera className="w-5 h-5 text-gray-800" />
@@ -362,8 +362,8 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
 
   // 詳情頁面
   return (
-    <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-4">
-      <div className="px-6 pb-4">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
+      <div className="px-6 pb-4 pt-2">
         <div className="bg-white/70 backdrop-blur-xl rounded-[24px] p-4 shadow-sm border border-white/60">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -386,7 +386,7 @@ export default function PhotosView({ plants }: { plants: PlantItem[] }) {
                     <span>{selectedPlant?.isConnected ? 'CONNECTED' : 'OFFLINE'}</span>
                   </div>
                   <div className="text-[10px] font-bold text-gray-400">
-                    {selectedPlant?.isConnected ? '定時拍照中' : '設備已斷開連結'}
+                    {selectedPlant?.isConnected ? '定時拍照中' : '設備未連線'}
                   </div>
                 </div>
               </div>

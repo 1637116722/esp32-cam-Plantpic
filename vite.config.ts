@@ -7,6 +7,8 @@ import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { GoogleGenerativeAI } from "@google/generative-ai"
 
+import { VitePWA } from 'vite-plugin-pwa'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -452,6 +454,28 @@ export default defineConfig(({ mode }) => {
       // Tailwind is not being actively used – do not remove them
       react(),
       tailwindcss(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+        manifest: {
+          name: 'PlanTalk',
+          short_name: 'PlanTalk',
+          description: '智慧植物管家系統',
+          theme_color: '#ffffff',
+          icons: [
+            {
+              src: 'pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png'
+            },
+            {
+              src: 'pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png'
+            }
+          ]
+        }
+      }),
       plantChatApiPlugin,
     ],
     resolve: {

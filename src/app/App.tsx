@@ -45,6 +45,21 @@ export default function App() {
     const [selectedCategory, setSelectedCategory] = useState<string>("my-garden");
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [plants, setPlants] = useState<PlantItem[]>(initialPlants);
+    // 初始化時從 localStorage 載入植物資料
+    useEffect(() => {
+        const savedPlants = localStorage.getItem("plantalk_plants_v1");
+        if (savedPlants) {
+            try {
+                const parsed = JSON.parse(savedPlants);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    setPlants(parsed);
+                }
+            } catch (e) {
+                console.error("Failed to load plants from localStorage", e);
+            }
+        }
+    }, []);
+
     const [latestPhotos, setLatestPhotos] = useState<Record<string, string>>({});
     const [espStatus, setEspStatus] = useState<Record<string, boolean>>({});
 
@@ -492,19 +507,25 @@ export default function App() {
 
     // 同步到檔案的函數
     const syncToFile = async (currentPlants: PlantItem[]) => {
+        // 同步到 localStorage (所有平台通用)
+        localStorage.setItem("plantalk_plants_v1", JSON.stringify(currentPlants));
+
         // 如果目前狀態與檔案內容一致，則不需要寫入 (避免循環)
         if (JSON.stringify(currentPlants) === JSON.stringify(initialPlants)) {
             return;
         }
 
-        try {
-            await fetch('/api/save-plants', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ plants: currentPlants })
-            });
-        } catch (e) {
-            console.error("Failed to sync plants to file:", e);
+        // 同步到伺服器實體檔案 (僅本地開發環境有效)
+        if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+            try {
+                await fetch('/api/save-plants', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plants: currentPlants })
+                });
+            } catch (e) {
+                console.error("Failed to sync plants to file:", e);
+            }
         }
     };
 
@@ -614,8 +635,13 @@ export default function App() {
 
     const isHeaderVisible = activeTab === "home" || selectedPlant !== null;
 
+    // 判斷是否為手機 App 環境 (Capacitor 或行動裝置瀏覽器)
+    const isMobileApp = typeof window !== 'undefined' && 
+        (window.location.protocol === 'capacitor:' || 
+         /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+
     return (
-        <div className="w-full h-screen flex justify-center items-center" style={{ backgroundColor: theme.bg }}>
+        <div className="w-full h-screen flex justify-center items-center overflow-hidden" style={{ backgroundColor: theme.bg }}>
             <style>{`
                 .no-scrollbar::-webkit-scrollbar {
                     display: none;
@@ -624,29 +650,30 @@ export default function App() {
                     -ms-overflow-style: none;
                     scrollbar-width: none;
                 }
+                /* 針對手機版隱藏捲軸並確保填滿 */
+                html, body {
+                    overflow: hidden;
+                    width: 100%;
+                    height: 100%;
+                }
             `}</style>
-            {/* iPhone frame */}
+            
+            {/* 桌面端預覽時顯示 iPhone 框架，手機端則全螢幕 */}
             <div
-                className="
-          relative
-          aspect-[9/19.5]
-          h-full
-          max-h-screen
-          max-w-[430px]
-          w-full
-          px-2
-          "
+                className={`
+                    relative w-full h-full flex flex-col overflow-hidden transition-all duration-500
+                    ${!isMobileApp 
+                        ? 'aspect-[9/19.5] max-h-[92vh] max-w-[430px] rounded-[50px] shadow-2xl border-[8px] border-gray-800 my-4' 
+                        : 'rounded-0 border-0'}
+                `}
                 style={{ backgroundColor: theme.bg }}
             >
                 <div
-                    className="
-          overflow-hidden
-          rounded-[28px]
-          shadow-xl
-          h-full flex flex-col
-          bg-[#F6FAF7]
-          relative
-        "
+                    className={`
+                        overflow-hidden h-full flex flex-col relative
+                        ${!isMobileApp ? 'rounded-[42px]' : 'rounded-0'}
+                        bg-[#F6FAF7]
+                    `}
                 >
                     {/* 全域通知彈窗 */}
                     <ToastNotification 
@@ -670,6 +697,8 @@ export default function App() {
                             className="absolute top-0 left-0 z-30 w-full overflow-visible pointer-events-none transition-opacity duration-300"
                             style={{ 
                                 height: `${headerHeight}px`,
+                                // 移除整體下移，背景應延伸至頂部，內容在 TimeWeatherHeader 內部避開靈動島
+                                paddingTop: '0',
                                 opacity: isHeaderVisible ? 1 : 0,
                                 visibility: isHeaderVisible ? 'visible' : 'hidden',
                                 willChange: 'height, opacity'
@@ -709,8 +738,8 @@ export default function App() {
                                     className="w-full h-full overflow-y-auto no-scrollbar"
                                     onScroll={handleHomeScroll}
                                 >
-                                    {/* Spacer to push content below the absolute header */}
-                                    <div style={{ height: `${MAX_HEIGHT}px` }} className="w-full shrink-0 pointer-events-none" />
+                                    {/* Spacer to push content below the absolute header - adjusted for safe area */}
+                                    <div style={{ height: `calc(${MAX_HEIGHT}px)` }} className="w-full shrink-0 pointer-events-none" />
                                     
                                     <div className="px-6 space-y-6 relative z-10">
                                         {/* 分類篩選與新增按鈕 */}
@@ -744,13 +773,11 @@ export default function App() {
                         ) : (
                             <>
                                 {activeTab !== "photos" && (
-                                    <div className="safe-top">
-                                        <TopLabelHeader title={
-                                            activeTab === "journal" ? "日誌" :
-                                            activeTab === "search" ? "搜尋" :
-                                            activeTab === "moments" ? "時光" : ""
-                                        } onBack={activeTab !== "journal" && activeTab !== "search" ? () => setActiveTab("home") : undefined} />
-                                    </div>
+                                    <TopLabelHeader title={
+                                        activeTab === "journal" ? "日誌" :
+                                        activeTab === "search" ? "搜尋" :
+                                        activeTab === "moments" ? "時光" : ""
+                                    } onBack={activeTab !== "journal" && activeTab !== "search" ? () => setActiveTab("home") : undefined} />
                                 )}
                                 <div className={`flex-1 ${activeTab === "home" ? "overflow-y-auto" : "overflow-hidden flex flex-col"}`}>
                                     {activeTab === "search" ? (

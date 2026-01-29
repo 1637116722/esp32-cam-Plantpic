@@ -283,7 +283,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
         ) : null}
 
         {/* Content */}
-        <div className="relative z-10 px-6 pt-12 pb-6">
+        <div className="relative z-10 px-6 pt-[calc(env(safe-area-inset-top)+1rem)] pb-6">
           <div className="flex items-start justify-between">
             {/* Left: Weather info with dark container for better readability */}
             {isLoading ? (

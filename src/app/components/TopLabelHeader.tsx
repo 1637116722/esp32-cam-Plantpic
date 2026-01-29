@@ -8,7 +8,7 @@ interface TopLabelHeaderProps {
 
 export default function TopLabelHeader({ title, onBack }: TopLabelHeaderProps) {
   return (
-    <div className="w-full px-6 pt-6 pb-4">
+    <div className="w-full px-6 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-4">
       <div className="relative flex items-center justify-center">
         {onBack ? (
           <button

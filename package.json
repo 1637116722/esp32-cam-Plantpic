@@ -8,9 +8,16 @@
     "dev": "vite",
     "dev:vercel": "vercel dev",
     "start": "cd esp32-cam-server && node app.js",
-    "static": "vite preview"
+    "static": "vite preview",
+    "cap:sync": "npx cap sync",
+    "cap:open:ios": "npx cap open ios",
+    "cap:open:android": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/core": "^8.0.2",
+    "@capacitor/ios": "^8.0.2",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@google/generative-ai": "^0.24.1",
@@ -84,7 +91,8 @@
     "@vercel/node": "^5.5.19",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",
-    "vite": "6.3.5"
+    "vite": "6.3.5",
+    "vite-plugin-pwa": "^1.2.0"
   },
   "pnpm": {
     "overrides": {

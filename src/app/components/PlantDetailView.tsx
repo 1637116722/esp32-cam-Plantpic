@@ -1,22 +1,6 @@
 import { useState, useEffect, useRef, memo } from 'react';
-import { 
-  ArrowLeft, 
-  Sparkles, 
-  Trash2, 
-  AlertTriangle, 
-  Home, 
-  Trees, 
-  Pencil, 
-  Check, 
-  X, 
-  AlertCircle, 
-  CheckCircle2,
-  Video,
-  RefreshCw,
-  Camera,
-  Heart,
-  Droplet
-} from 'lucide-react';
+import { Droplet, Camera, RefreshCw, Video, CheckCircle2, AlertCircle, X, Check, Pencil, Trees, Home, AlertTriangle, Trash2, Sparkles, ArrowLeft, Heart } from 'lucide-react';
+import { getApiUrl } from "../../utils/apiConfig";
 import {
   Accordion,
   AccordionContent,
@@ -122,14 +106,33 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
   const { MAX_HEIGHT } = SCROLL_CONFIG;
 
   const parseJsonResponse = async (response: Response) => {
-    const text = await response.text();
-    if (!text) {
-      return { success: false, error: "Empty response" };
-    }
     try {
-      return JSON.parse(text);
-    } catch {
-      return { success: false, error: text };
+      const text = await response.text();
+      if (!text) {
+        return { success: false, error: "伺服器回傳內容為空" };
+      }
+      
+      // 如果回傳內容包含 HTML 標籤，說明可能是 Vercel 路由錯誤或 404
+      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+        console.error("API returned HTML instead of JSON:", text.substring(0, 200));
+        return { 
+          success: false, 
+          error: "伺服器連線異常 (API 路由錯誤)，請確保已將專案部署至 Vercel 並檢查 VERCEL_URL。" 
+        };
+      }
+
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        console.error("JSON parse error:", e, "Text:", text.substring(0, 200));
+        return { 
+          success: false, 
+          error: `資料格式解析失敗 (HTTP ${response.status})。可能是 Vercel 尚未部署完成或 VERCEL_URL 設定錯誤。` 
+        };
+      }
+    } catch (e) {
+      console.error("parseJsonResponse error:", e);
+      return { success: false, error: "無法讀取伺服器回傳內容，請檢查網路連線。" };
     }
   };
 
@@ -209,9 +212,10 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
         lastAICallTime = now;
         setIsDailyLoading(true);
         try {
-          const response = await fetch("/api/daily-care", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+          const apiUrl = getApiUrl("/api/daily-care");
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
               plantName: plant.name, 
               species: plant.species,
@@ -298,12 +302,30 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
     try {
       setAnalysisError(null);
       
+      let finalImageUrl = imageUrl;
+      // 如果是本地 Blob URL，必須先轉換為 Base64
+      if (includeImage && imageUrl && imageUrl.startsWith('blob:')) {
+        try {
+          const res = await fetch(imageUrl);
+          const blob = await res.blob();
+          finalImageUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.error("Blob to Base64 conversion failed:", e);
+          throw new Error("無法處理本地圖片，請嘗試重新上傳。");
+        }
+      }
+
       // 步驟 1: 呼叫 Gemini API 進行深度分析與報告生成
-      const response = await fetch("/api/analyze-plant", {
+      const apiUrl = getApiUrl("/api/analyze-plant");
+      const response = await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          imageUrl: includeImage ? imageUrl : null, 
+          imageUrl: includeImage ? finalImageUrl : null, 
           plantName, 
           species, 
           currentMoisture: moisture,
@@ -355,42 +377,47 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
     setAnalysisError(null);
     setShowCompleteTip(false);
 
-    const analysisResult = await analyzeImageWithGemini(
-      null, 
-      plant.name, 
-      plant.species,
-      plant.moisture ?? 50, // 傳入當前濕度值
-      'none',
-      false,
-      plant.healthAnalysis // 傳入健康診斷結果
-    );
-    
-    if (analysisResult) {
-      setCurrentAnalysis({ text: analysisResult.text });
-      setShowAnalysis(true);
-      // setShowCompleteTip(true); // 取消顯示完成提示
+    try {
+      const analysisResult = await analyzeImageWithGemini(
+        null, 
+        plant.name, 
+        plant.species,
+        plant.moisture ?? 50, // 傳入當前濕度值
+        'none',
+        false,
+        plant.healthAnalysis // 傳入健康診斷結果
+      );
       
-      // 更新持久化儲存，同時更新每日建議
-      const updatedPlant: PlantItem = {
-        ...plant,
-        aiAnalysis: analysisResult.text
-      };
-
-      // 如果 AI 分析有提供更精確的建議數值，則更新它
-      if (analysisResult.moisture || analysisResult.sunlight) {
-        updatedPlant.dailyRecommendation = {
-          ...plant.dailyRecommendation,
-          moisture: analysisResult.moisture || plant.dailyRecommendation?.moisture || "50%",
-          sunlight: analysisResult.sunlight || plant.dailyRecommendation?.sunlight || "4小時",
-          lastUpdated: new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-'),
-          lastUpdatedTs: Date.now()
+      if (analysisResult) {
+        setCurrentAnalysis({ text: analysisResult.text });
+        setShowAnalysis(true);
+        // setShowCompleteTip(true); // 取消顯示完成提示
+        
+        // 更新持久化儲存，同時更新每日建議
+        const updatedPlant: PlantItem = {
+          ...plant,
+          aiAnalysis: analysisResult.text
         };
+
+        // 如果 AI 分析有提供更精確的建議數值，則更新它
+        if (analysisResult.moisture || analysisResult.sunlight) {
+          updatedPlant.dailyRecommendation = {
+            ...plant.dailyRecommendation,
+            moisture: analysisResult.moisture || plant.dailyRecommendation?.moisture || "50%",
+            sunlight: analysisResult.sunlight || plant.dailyRecommendation?.sunlight || "4小時",
+            lastUpdated: new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-'),
+            lastUpdatedTs: Date.now()
+          };
+        }
+
+        onUpdate(updatedPlant);
       }
-
-      onUpdate(updatedPlant);
+    } catch (e: any) {
+      console.error("AI Analysis Error:", e);
+      setAnalysisError(e.message || "無法連線至 Gemini 分析服務，請檢查網路後重試。");
+    } finally {
+      setIsAnalyzing(false);
     }
-
-    setIsAnalyzing(false);
   };
 
   const handlePhotoAnalysis = async () => {
@@ -403,17 +430,38 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
     }
     setIsPhotoAnalyzing(true);
     setShowPhotoCompleteTip(false);
+    
     try {
-      const response = await fetch("/api/identify-plant", {
+      let finalImageUrl = activeImageUrl;
+      
+      // 如果是本地 Blob URL，必須先轉換為 Base64，否則 Vercel 伺服器無法存取
+      if (activeImageUrl.startsWith('blob:')) {
+        try {
+          const res = await fetch(activeImageUrl);
+          const blob = await res.blob();
+          finalImageUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.error("Blob to Base64 conversion failed:", e);
+          throw new Error("無法處理本地圖片，請嘗試重新上傳。");
+        }
+      }
+
+      const apiUrl = getApiUrl("/api/identify-plant");
+      const response = await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          imageUrl: activeImageUrl,
+          imageUrl: finalImageUrl,
           moisture: plant.moisture || 50,
           plantName: plant.name,
           species: plant.species
         })
       });
+      
       const data = await parseJsonResponse(response);
       if (data.success) {
         const updatedPlant: PlantItem = {
@@ -434,9 +482,10 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
       } else {
         setAnalysisError(data.error || "照片分析暫時不可用，請稍後再試。");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Photo Analysis Error:", error);
-      setAnalysisError("無法連線至照片分析服務，請檢查網路後重試。");
+      const errorMsg = error.message || "無法連線至照片分析服務，請檢查網路後重試。";
+      setAnalysisError(errorMsg);
     } finally {
       setIsPhotoAnalyzing(false);
     }
@@ -599,7 +648,7 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
   }, [plant.id]); 
 
   return (
-    <div className="w-full h-full relative bg-[#F6FAF7] overflow-hidden flex flex-col">
+    <div className="w-full h-full relative bg-[#F6FAF7] overflow-hidden flex flex-col pt-[env(safe-area-inset-top)]">
       <style>{`
         @keyframes wave {
           0% { transform: translateX(-12px) skewY(-1deg); }
@@ -613,7 +662,7 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
       `}</style>
 
       {/* Hero Section placeholder - Only Back Button fixed at top */}
-      <div className="absolute top-0 left-0 w-full z-50 pointer-events-none">
+      <div className="absolute top-[env(safe-area-inset-top)] left-0 w-full z-50 pointer-events-none">
         <div className="px-6 pt-4 pointer-events-auto">
           <button
             onClick={onBack}

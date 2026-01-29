@@ -5,6 +5,30 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
  * 植物養護建議 API (Gemini 版)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // 1. 設定 CORS
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  // 2. 處理 OPTIONS 請求
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  // 3. 測試用 GET 請求
+  if (req.method === 'GET') {
+    return res.status(200).json({ 
+      status: "alive", 
+      message: "植物分析服務已就緒 (POST only)",
+      endpoint: "/api/analyze-plant"
+    });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }

@@ -5,6 +5,30 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
  * 植物狀態分析 API (Gemini 全能版)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // 1. 設定 CORS
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  // 2. 處理 OPTIONS 請求 (Preflight)
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  // 3. 測試用 GET 請求
+  if (req.method === 'GET') {
+    return res.status(200).json({ 
+      status: "alive", 
+      message: "植物辨識服務已就緒 (POST only)",
+      endpoint: "/api/identify-plant"
+    });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -82,12 +106,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ]);
 
     const response = await result.response;
-    const text = response.text();
+    const text = response.text().trim();
     
     // 提取 JSON
     let finalData;
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      // 移除可能存在的 Markdown 程式碼區塊標記
+      const cleanText = text.replace(/```json\n?|```/g, '').trim();
+      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         finalData = JSON.parse(jsonMatch[0]);
       } else {
@@ -95,7 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } catch (e) {
       console.error("Gemini Parse Error:", e, text);
-      throw new Error("Gemini 回傳格式錯誤");
+      throw new Error(`Gemini 回傳格式錯誤: ${text.substring(0, 100)}...`);
     }
 
     res.status(200).json({
