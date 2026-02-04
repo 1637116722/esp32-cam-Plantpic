@@ -88,8 +88,20 @@ export async function verifyImageWithPlant(imageUrl: string, plantName: string):
       body: JSON.stringify({ messages, type: 'vision' }),
     });
 
-    if (!res.ok) return false;
-    const data = await res.json();
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error("Image verification failed:", res.status, errText.slice(0, 200));
+      return false;
+    }
+
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      const errText = await res.text().catch(() => "");
+      console.error("Image verification bad JSON:", e, errText.slice(0, 200));
+      return false;
+    }
     const text = data?.text || "";
     
     return text.includes("是") || text.toLowerCase().includes("yes");

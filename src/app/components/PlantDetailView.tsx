@@ -83,6 +83,7 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [currentAnalysis, setCurrentAnalysis] = useState<AnalysisReport>(DEFAULT_ANALYSIS);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysisErrorDetail, setAnalysisErrorDetail] = useState<string | null>(null);
   const [showCompleteTip, setShowCompleteTip] = useState(false);
   const [camImageKey, setCamImageKey] = useState(Date.now());
   const [camImageSrc, setCamImageSrc] = useState<string>('');
@@ -107,9 +108,10 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
 
   const parseJsonResponse = async (response: Response) => {
     try {
+      const status = response.status;
       const text = await response.text();
       if (!text) {
-        return { success: false, error: "伺服器回傳內容為空" };
+        return { success: false, error: `伺服器回傳內容為空 (HTTP ${status})` };
       }
       
       // 如果回傳內容包含 HTML 標籤，說明可能是 Vercel 路由錯誤或 404
@@ -117,7 +119,8 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
         console.error("API returned HTML instead of JSON:", text.substring(0, 200));
         return { 
           success: false, 
-          error: "伺服器連線異常 (API 路由錯誤)，請確保已將專案部署至 Vercel 並檢查 VERCEL_URL。" 
+          error: `伺服器回傳 HTML (HTTP ${status})，請檢查 Vercel 設定與部署狀態。`,
+          rawText: text.substring(0, 500)
         };
       }
 
@@ -127,7 +130,8 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
         console.error("JSON parse error:", e, "Text:", text.substring(0, 200));
         return { 
           success: false, 
-          error: `資料格式解析失敗 (HTTP ${response.status})。可能是 Vercel 尚未部署完成或 VERCEL_URL 設定錯誤。` 
+          error: `資料格式解析失敗 (HTTP ${status})。可能是 Vercel 尚未部署完成或 VERCEL_URL 設定錯誤。`,
+          rawText: text.substring(0, 500)
         };
       }
     } catch (e) {
@@ -243,7 +247,7 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
       };
       fetchDailyCare();
     }
-  }, [plant.id]); // 僅監聽 ID，實現每日僅刷新一次
+  }, [plant.id, weather]); // 需要 weather 變更時觸發
 
   const [isAnalysisExpanded, setIsAnalysisExpanded] = useState(false);
 
@@ -278,6 +282,7 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
     setEditSpecies(plant.species || '');
     setEditType(plant.type);
     setAnalysisError(null);
+    setAnalysisErrorDetail(null);
     setShowCompleteTip(false);
     
     // 如果外部傳入的 plant 帶有分析結果，同步到內部狀態
@@ -301,22 +306,55 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
 
     try {
       setAnalysisError(null);
+      setAnalysisErrorDetail(null);
       
       let finalImageUrl = imageUrl;
+      const resizeImageToDataUrl = async (blob: Blob, maxSize = 1024, quality = 0.82): Promise<string> => {
+        const bitmap = await createImageBitmap(blob);
+        const ratio = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height));
+        const targetW = Math.max(1, Math.round(bitmap.width * ratio));
+        const targetH = Math.max(1, Math.round(bitmap.height * ratio));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('無法建立影像處理畫布');
+        ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+        return canvas.toDataURL('image/jpeg', quality);
+      };
+      const dataUrlToBlob = (dataUrl: string): Blob => {
+        const [meta, base64] = dataUrl.split(",");
+        const mimeMatch = meta.match(/data:(.*?);base64/);
+        const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+        const binary = atob(base64 || "");
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+        return new Blob([bytes], { type: mime });
+      };
+
       // 如果是本地 Blob URL，必須先轉換為 Base64
       if (includeImage && imageUrl && imageUrl.startsWith('blob:')) {
         try {
           const res = await fetch(imageUrl);
           const blob = await res.blob();
-          finalImageUrl = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(blob);
-          });
+          finalImageUrl = await resizeImageToDataUrl(blob);
         } catch (e) {
           console.error("Blob to Base64 conversion failed:", e);
           throw new Error("無法處理本地圖片，請嘗試重新上傳。");
         }
+      } else if (includeImage && imageUrl && imageUrl.startsWith('data:')) {
+        try {
+          const blob = dataUrlToBlob(imageUrl);
+          finalImageUrl = await resizeImageToDataUrl(blob);
+        } catch (e) {
+          console.error("Data URL resize failed:", e);
+          throw new Error("無法處理圖片資料，請嘗試重新上傳。");
+        }
+      } else if (includeImage && imageUrl && imageUrl.startsWith('http')) {
+        // 對於 http/https 圖片，直接交給伺服器端抓取以避免 iOS 端載入失敗
+        finalImageUrl = imageUrl;
       }
 
       // 步驟 1: 呼叫 Gemini API 進行深度分析與報告生成
@@ -350,9 +388,13 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
       }
 
       setAnalysisError(data.error || "Gemini 分析暫時不可用，請稍後再試。");
+      if (data?.rawText) {
+        setAnalysisErrorDetail(String(data.rawText));
+      }
     } catch (error) {
       console.error("Fetch Analysis Error:", error);
       setAnalysisError("無法連線至 Gemini 分析服務，請檢查網路後重試。");
+      setAnalysisErrorDetail(String(error));
     }
     return null;
   };
@@ -375,6 +417,7 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
     lastAICallTime = now;
     setShowAnalysis(false);
     setAnalysisError(null);
+    setAnalysisErrorDetail(null);
     setShowCompleteTip(false);
 
     try {
@@ -412,17 +455,19 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
 
         onUpdate(updatedPlant);
       }
-    } catch (e: any) {
-      console.error("AI Analysis Error:", e);
-      setAnalysisError(e.message || "無法連線至 Gemini 分析服務，請檢查網路後重試。");
-    } finally {
-      setIsAnalyzing(false);
-    }
+  } catch (e: any) {
+    console.error("AI Analysis Error:", e);
+    setAnalysisError(e.message || "無法連線至 Gemini 分析服務，請檢查網路後重試。");
+    setAnalysisErrorDetail(String(e));
+  } finally {
+    setIsAnalyzing(false);
+  }
   };
 
   const handlePhotoAnalysis = async () => {
     if (isPhotoAnalyzing) return;
     setAnalysisError(null);
+    setAnalysisErrorDetail(null);
     const activeImageUrl = plant.latestEspPhoto || plant.imageUrl || null;
     if (!activeImageUrl) {
       setAnalysisError('目前沒有可用的照片，請先上傳或拍攝。');
@@ -433,21 +478,53 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
     
     try {
       let finalImageUrl = activeImageUrl;
+      const resizeImageToDataUrl = async (blob: Blob, maxSize = 1024, quality = 0.82): Promise<string> => {
+        const bitmap = await createImageBitmap(blob);
+        const ratio = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height));
+        const targetW = Math.max(1, Math.round(bitmap.width * ratio));
+        const targetH = Math.max(1, Math.round(bitmap.height * ratio));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('無法建立影像處理畫布');
+        ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+        return canvas.toDataURL('image/jpeg', quality);
+      };
       
-      // 如果是本地 Blob URL，必須先轉換為 Base64，否則 Vercel 伺服器無法存取
+      const dataUrlToBlob = (dataUrl: string): Blob => {
+        const [meta, base64] = dataUrl.split(",");
+        const mimeMatch = meta.match(/data:(.*?);base64/);
+        const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+        const binary = atob(base64 || "");
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+        return new Blob([bytes], { type: mime });
+      };
+
+      // 若為 Blob / data 圖片，先縮圖再轉 Base64，避免 payload 過大導致 API 失敗
       if (activeImageUrl.startsWith('blob:')) {
         try {
           const res = await fetch(activeImageUrl);
           const blob = await res.blob();
-          finalImageUrl = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(blob);
-          });
+          finalImageUrl = await resizeImageToDataUrl(blob);
         } catch (e) {
-          console.error("Blob to Base64 conversion failed:", e);
-          throw new Error("無法處理本地圖片，請嘗試重新上傳。");
+          console.error("Image resize failed:", e);
+          throw new Error("無法處理圖片，請嘗試重新上傳。");
         }
+      } else if (activeImageUrl.startsWith('data:')) {
+        try {
+          const blob = dataUrlToBlob(activeImageUrl);
+          finalImageUrl = await resizeImageToDataUrl(blob);
+        } catch (e) {
+          console.error("Data URL resize failed:", e);
+          throw new Error("無法處理圖片資料，請嘗試重新上傳。");
+        }
+      } else if (activeImageUrl.startsWith('http')) {
+        // 直接交給伺服器端抓取，避免 iOS 端載入失敗
+        finalImageUrl = activeImageUrl;
       }
 
       const apiUrl = getApiUrl("/api/identify-plant");
@@ -481,11 +558,15 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
         setShowPhotoCompleteTip(true);
       } else {
         setAnalysisError(data.error || "照片分析暫時不可用，請稍後再試。");
+        if (data?.rawText) {
+          setAnalysisErrorDetail(String(data.rawText));
+        }
       }
     } catch (error: any) {
       console.error("Photo Analysis Error:", error);
       const errorMsg = error.message || "無法連線至照片分析服務，請檢查網路後重試。";
       setAnalysisError(errorMsg);
+      setAnalysisErrorDetail(`type=${typeof error} value=${String(error)}`);
     } finally {
       setIsPhotoAnalyzing(false);
     }
@@ -1167,6 +1248,11 @@ const PlantDetailView = memo(function PlantDetailView({ plant, onBack, onUpdate,
             <AlertCircle className="w-4 h-4 text-red-500 mt-0.5" />
             <div className="text-xs text-red-700 leading-relaxed">
               {analysisError}
+              {analysisErrorDetail && (
+                <div className="mt-2 rounded-lg bg-red-100/60 border border-red-200 px-3 py-2 text-[10px] font-mono text-red-800 whitespace-pre-wrap break-words">
+                  {analysisErrorDetail}
+                </div>
+              )}
             </div>
           </div>
         )}

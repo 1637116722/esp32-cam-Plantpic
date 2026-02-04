@@ -138,7 +138,14 @@ export default function App() {
 
                 // 檢查是否已經在相簿中
                 const raw = localStorage.getItem("photo_gallery_items_v1");
-                const items = raw ? JSON.parse(raw) : [];
+                let items: any[] = [];
+                if (raw) {
+                    try {
+                        items = JSON.parse(raw);
+                    } catch (e) {
+                        console.error("Failed to parse photo_gallery_items_v1", e);
+                    }
+                }
                 const isAlreadyInGallery = items.some((it: any) => it.capturedAtIso === lastUploadTime);
                 
                 if (!isAlreadyInGallery) {
@@ -246,7 +253,7 @@ export default function App() {
                 lon = locData.longitude;
             }
 
-            if (lat && lon) {
+            if (lat !== undefined && lat !== null && lon !== undefined && lon !== null) {
                 const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
                 const response = await fetch(weatherUrl);
                 const data = await response.json();
@@ -307,13 +314,18 @@ export default function App() {
         const saved = localStorage.getItem('plant_journal_records');
         if (!saved) return [];
         
-        const records: JournalRecord[] = JSON.parse(saved);
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        const thresholdKey = sevenDaysAgo.toISOString().split('T')[0];
-        
-        // 遷移與清理：過濾 7 天前的紀錄
-        return records.filter(r => r.dateKey >= thresholdKey);
+        try {
+            const records: JournalRecord[] = JSON.parse(saved);
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            const thresholdKey = sevenDaysAgo.toISOString().split('T')[0];
+            
+            // 遷移與清理：過濾 7 天前的紀錄
+            return records.filter(r => r.dateKey >= thresholdKey);
+        } catch (e) {
+            console.error("Failed to parse plant_journal_records", e);
+            return [];
+        }
     });
 
     // 通知狀態
@@ -683,12 +695,6 @@ export default function App() {
                             setActiveTab('journal');
                             setNotifications(prev => prev.filter(n => n.id !== id));
                         }}
-                    />
-
-                    <AddPlantDialog 
-                        open={isAddDialogOpen} 
-                        onOpenChange={setIsAddDialogOpen}
-                        onAdd={addPlant}
                     />
 
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">

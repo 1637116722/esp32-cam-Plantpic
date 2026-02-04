@@ -24,6 +24,12 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>需要相機來拍攝植物照片進行診斷</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>需要存取相簿以選擇植物照片</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>需要儲存植物照片到相簿</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

@@ -69,17 +69,26 @@ export async function searchPlantImages(query: string, count: number = 4): Promi
     const candidates = photos.map((p: any) => p.src.large);
     const verifiedImages: string[] = [];
 
-    // 並行驗證所有圖片以提高速度
-    const verificationPromises = candidates.map(async (url) => {
-      try {
-        const isValid = await verifyImageWithPlant(url, englishQuery);
-        return { url, isValid };
-      } catch {
-        return { url, isValid: false };
-      }
-    });
+    // 限制並行數，避免行動裝置或弱網路上大量請求失敗
+    const concurrency = 3;
+    const results: { url: string; isValid: boolean }[] = new Array(candidates.length);
+    let cursor = 0;
 
-    const results = await Promise.all(verificationPromises);
+    const worker = async () => {
+      while (cursor < candidates.length) {
+        const currentIndex = cursor++;
+        const url = candidates[currentIndex];
+        try {
+          const isValid = await verifyImageWithPlant(url, englishQuery);
+          results[currentIndex] = { url, isValid };
+        } catch {
+          results[currentIndex] = { url, isValid: false };
+        }
+      }
+    };
+
+    const workerCount = Math.min(concurrency, candidates.length);
+    await Promise.all(Array.from({ length: workerCount }, worker));
     
     // 過濾出通過驗證的圖片
     for (const result of results) {

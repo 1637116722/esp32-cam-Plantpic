@@ -9,7 +9,7 @@ export const VERCEL_URL = 'https://plantalk-app.vercel.app';
 export const getApiUrl = (path: string): string => {
   // 判斷是否在 Capacitor 環境 (iOS/Android App)
   const isCapacitor = typeof window !== 'undefined' && 
-    (window.location.protocol === 'capacitor:' || window.location.protocol === 'http:');
+    window.location.protocol === 'capacitor:';
     
   // 判斷是否為本地開發網頁 (localhost)
   const isLocalWeb = typeof window !== 'undefined' && 
@@ -23,7 +23,7 @@ export const getApiUrl = (path: string): string => {
   // 1. 如果是 Capacitor (App)，絕對要使用 Vercel URL
   // 2. 如果是本地開發網頁，使用相對路徑 (Vite Proxy)
   // 3. 其他情況 (如直接訪問 Vercel 網頁)，使用相對路徑即可
-  if (isCapacitor) {
+  if (isCapacitor && !isLocalWeb) {
     return `${VERCEL_URL}${cleanPath}`;
   }
   
