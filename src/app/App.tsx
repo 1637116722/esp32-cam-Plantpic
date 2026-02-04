@@ -224,10 +224,16 @@ export default function App() {
     }, [augmentedPlants, selectedCategory]);
     const [selectedPlant, setSelectedPlant] = useState<PlantItem | null>(null);
     const [homeScrollY, setHomeScrollY] = useState(0);
-    const [detailScrollY, setDetailScrollY] = useState(0);
     const isUpdatingFromHmr = useRef(false);
     const homeScrollRef = useRef<HTMLDivElement>(null);
     const isResettingHomeScroll = useRef(false);
+    const headerRef = useRef<HTMLDivElement>(null);
+    const homeScrollYRef = useRef(0);
+    const detailScrollYRef = useRef(0);
+    const scrollCommitTimerRef = useRef<number | null>(null);
+    const targetProgressRef = useRef(0);
+    const currentProgressRef = useRef(0);
+    const animationFrameRef = useRef<number | null>(null);
 
     // 天氣狀態
     const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -559,30 +565,86 @@ export default function App() {
         }
     }, [plants]);
 
+    const setTargetFromScroll = useCallback((scrollY: number) => {
+        const clamped = Math.min(scrollY, MAX_SCROLL);
+        targetProgressRef.current = clamped / MAX_SCROLL;
+    }, []);
+
     const homeTickingRef = useRef(false);
     const handleHomeScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
         if (isResettingHomeScroll.current) return;
         const st = e.currentTarget.scrollTop;
+        homeScrollYRef.current = st;
+        setTargetFromScroll(st);
         
         if (!homeTickingRef.current) {
             window.requestAnimationFrame(() => {
-                setHomeScrollY(st);
                 homeTickingRef.current = false;
             });
             homeTickingRef.current = true;
         }
+
+        if (scrollCommitTimerRef.current !== null) {
+            window.clearTimeout(scrollCommitTimerRef.current);
+        }
+        scrollCommitTimerRef.current = window.setTimeout(() => {
+            setHomeScrollY(homeScrollYRef.current);
+        }, 120);
+    }, [setTargetFromScroll]);
+
+    useEffect(() => {
+        const animate = () => {
+            const target = targetProgressRef.current;
+            const current = currentProgressRef.current;
+            const next = current + (target - current) * 0.18;
+            currentProgressRef.current = next;
+
+            const height = MAX_HEIGHT - next * (MAX_HEIGHT - MIN_HEIGHT);
+            const scale = 1 - next * (1 - MIN_SCALE);
+            const characterY = height * 0.5 - 60 - (next * 80);
+            const bubbleScale = Math.max(0.75, 1 / (scale * 1.2));
+            const bubbleX = 40 + (next * 80); // 縮小後更靠右
+            const bubbleYOffset = 200 - (next * 330); // 大時右上、縮小後靠右平行
+            const bubbleY = characterY - bubbleYOffset;
+
+            if (headerRef.current) {
+                headerRef.current.style.setProperty('--header-height', `${height}px`);
+                headerRef.current.style.setProperty('--header-scale', `${scale}`);
+                headerRef.current.style.setProperty('--scroll-progress', `${next}`);
+                headerRef.current.style.setProperty('--character-y', `${characterY}px`);
+                headerRef.current.style.setProperty('--bubble-scale', `${bubbleScale}`);
+                headerRef.current.style.setProperty('--bubble-x', `${bubbleX}px`);
+                headerRef.current.style.setProperty('--bubble-y', `${bubbleY}px`);
+            }
+
+            animationFrameRef.current = window.requestAnimationFrame(animate);
+        };
+
+        animationFrameRef.current = window.requestAnimationFrame(animate);
+        return () => {
+            if (animationFrameRef.current !== null) {
+                window.cancelAnimationFrame(animationFrameRef.current);
+                animationFrameRef.current = null;
+            }
+        };
     }, []);
 
-    // 計算 Header 狀態 (全域統一)
-    const currentScrollY = selectedPlant ? detailScrollY : (activeTab === "home" ? homeScrollY : 0);
-    const clamped = Math.min(currentScrollY, MAX_SCROLL);
-    const progress = clamped / MAX_SCROLL;
-    const headerHeight = MAX_HEIGHT - progress * (MAX_HEIGHT - MIN_HEIGHT);
-    const headerScale = 1 - progress * (1 - MIN_SCALE);
+    useEffect(() => {
+        const initialScroll = selectedPlant
+            ? detailScrollYRef.current
+            : (activeTab === "home" ? homeScrollYRef.current : 0);
+        setTargetFromScroll(initialScroll);
+    }, [activeTab, selectedPlant, setTargetFromScroll]);
 
     const handleDetailScroll = useCallback((y: number) => {
-        setDetailScrollY(y);
-    }, []);
+        detailScrollYRef.current = y;
+        setTargetFromScroll(y);
+
+        if (scrollCommitTimerRef.current !== null) {
+            window.clearTimeout(scrollCommitTimerRef.current);
+            scrollCommitTimerRef.current = null;
+        }
+    }, [setTargetFromScroll]);
 
     const addPlant = useCallback(async (name: string, species: string, type: 'indoor' | 'outdoor', imageUrl?: string, cameraId?: string) => {
         if (!name.trim()) return;
@@ -615,9 +677,9 @@ export default function App() {
     }, []);
 
     const handlePlantClick = useCallback((plant: PlantItem) => {
-        setDetailScrollY(homeScrollY);
+        detailScrollYRef.current = homeScrollYRef.current;
         setSelectedPlant(plant);
-    }, [homeScrollY]);
+    }, []);
     useEffect(() => {
         const root = document.documentElement;
         root.style.setProperty('--background', theme.bg);
@@ -700,14 +762,15 @@ export default function App() {
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
                         {/* 全域 Header - 確保人物與溫度不重新載入 */}
                         <div 
+                            ref={headerRef}
                             className="absolute top-0 left-0 z-30 w-full overflow-visible pointer-events-none transition-opacity duration-300"
                             style={{ 
-                                height: `${headerHeight}px`,
+                                height: 'var(--header-height, 580px)',
                                 // 移除整體下移，背景應延伸至頂部，內容在 TimeWeatherHeader 內部避開靈動島
                                 paddingTop: '0',
                                 opacity: isHeaderVisible ? 1 : 0,
                                 visibility: isHeaderVisible ? 'visible' : 'hidden',
-                                willChange: 'height, opacity'
+                                willChange: 'transform, opacity'
                             }}
                         >
                             <TimeWeatherHeader 
@@ -715,8 +778,6 @@ export default function App() {
                                 modelPath="/plant.glb" 
                                 externalWeather={weather}
                                 isExternalLoading={isWeatherLoading}
-                                customHeight={headerHeight}
-                                customScale={headerScale}
                                 selectedPlant={selectedPlant}
                                 plants={plants}
                             />
@@ -726,14 +787,15 @@ export default function App() {
                             <PlantDetailView 
                                             plant={augmentedPlants.find(p => p.id === selectedPlant.id) || selectedPlant}
                                              onBack={() => {
-                                                 setHomeScrollY(detailScrollY);
+                                                 homeScrollYRef.current = detailScrollYRef.current;
+                                                 setHomeScrollY(detailScrollYRef.current);
+                                                 detailScrollYRef.current = 0;
                                                  setSelectedPlant(null);
-                                                 setDetailScrollY(0);
                                              }}
                                              onUpdate={updatePlant}
                                              onDelete={deletePlant}
                                              onScroll={handleDetailScroll}
-                                              initialScrollY={homeScrollY}
+                                              initialScrollY={homeScrollYRef.current}
                                              externalWeather={weather}
                                          />
                         ) : activeTab === "home" ? (

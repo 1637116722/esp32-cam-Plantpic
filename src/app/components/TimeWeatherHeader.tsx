@@ -30,7 +30,6 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
     plants = [], 
     selectedPlant, 
     customHeight, 
-    customScale = 1, 
     externalWeather, 
     isExternalLoading = false 
   } = props; 
@@ -60,17 +59,6 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
       setTimeSeed(Math.floor(weather.lastUpdated / (5 * 60 * 1000)));
     }
   }, [weather?.lastUpdated]);
-
-  /* ---------- Scale related ---------- */ 
-  const scrollProgress = useMemo( 
-    () => Math.max(0, Math.min(1, (customScale - 0.55) / 0.45)), 
-    [customScale] 
-  ); 
-
-  const inverseScale = useMemo( 
-    () => 1 / (customScale * 1.1), 
-    [customScale] 
-  ); 
 
   /* ---------- Time seed ---------- */ 
   // 已移至與天氣同步，不再定時刷新
@@ -181,7 +169,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
     <div 
       className="w-full relative overflow-hidden pointer-events-none" 
       style={{ 
-        height: customHeight ? `${customHeight}px` : 'auto',
+        height: customHeight ? `${customHeight}px` : 'var(--header-height, 580px)',
         transformStyle: 'preserve-3d',
         backfaceVisibility: 'hidden',
         willChange: 'height'
@@ -191,7 +179,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
       <div 
         className="w-full relative overflow-hidden"
         style={{
-          height: customHeight ? `${customHeight}px` : '320px',
+          height: customHeight ? `${customHeight}px` : 'var(--header-height, 580px)',
           backgroundImage: 'url(/landscape-bg.jpg.png)',
           backgroundSize: 'cover',
           backgroundPosition: 'center 15%',
@@ -217,7 +205,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
             className="absolute left-1/2 w-64 h-64 pointer-events-none z-20" 
             style={{ 
               top: 0, 
-              transform: `translate3d(-50%, calc(${customHeight ? customHeight * 0.62 : 198}px - 50%), 0) scale(${customScale * 1.1})`,
+              transform: `translate3d(-50%, var(--character-y, 200px), 0) scale(calc(var(--header-scale, 1) * 1.1))`,
               filter: 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.15))',
               opacity: 0.95,
               transformOrigin: 'center center',
@@ -233,15 +221,13 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
               {aiSuggestion && (
                 <motion.div 
                   key={selectedPlant ? selectedPlant.id : 'home'}
-                  initial={{ opacity: 0, scale: 0.8, y: 20 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.8, y: 10 }}
-                  transition={{ duration: 0.4, ease: "easeOut" }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.35, ease: "easeOut" }}
                   className="absolute left-1/2 top-0 max-w-[180px] w-fit px-2 z-30" 
                   style={{ 
-                    x: `${20 - (scrollProgress * 15)}%`,
-                    y: `${-scrollProgress * 95 + 35}%`,
-                    scale: inverseScale,
+                    transform: 'translate3d(var(--bubble-x, 80px), var(--bubble-y, 120px), 0) scale(var(--bubble-scale, 0.9))',
                     transformOrigin: 'left bottom',
                     backfaceVisibility: 'hidden',
                     willChange: 'transform',
@@ -290,7 +276,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
               <div 
                 className="flex flex-col gap-1 p-3 rounded-2xl bg-black/30 backdrop-blur-md border border-white/10 text-white min-w-[120px] animate-pulse pointer-events-none"
                 style={{ 
-                  transform: `scale(${0.85 + (customScale - 0.55) * 0.33})`, 
+                  transform: 'scale(calc(0.85 + (var(--header-scale, 1) - 0.55) * 0.33))', 
                   transformOrigin: 'left top',
                 }}
               >
@@ -301,7 +287,7 @@ const TimeWeatherHeader = memo(function TimeWeatherHeader(props: TimeWeatherHead
               <div 
                 className="flex flex-col gap-1 p-3 rounded-2xl bg-black/30 backdrop-blur-md border border-white/10 text-white min-w-[120px] shadow-lg pointer-events-none"
                 style={{ 
-                  transform: `scale(${0.85 + (customScale - 0.55) * 0.33})`, 
+                  transform: 'scale(calc(0.85 + (var(--header-scale, 1) - 0.55) * 0.33))', 
                   transformOrigin: 'left top',
                   opacity: 0.95,
                   willChange: 'transform',
