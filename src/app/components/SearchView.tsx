@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { askPlantGPT, type ChatMessage } from "../../utils/gptClient";
+import { getApiUrl } from "../../utils/apiConfig";
 import { PlantItem } from "./PlantGrid";
 
 export type Msg = { role: "user" | "assistant"; text: string };
@@ -16,6 +17,7 @@ interface SearchViewProps {
 export default function SearchView({ plants = [], messages, onMessagesChange, onUpdatePlant }: SearchViewProps) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isTestingApi, setIsTestingApi] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -131,6 +133,39 @@ ${contextInfo}`,
     [input, messages, plants, onMessagesChange]
   );
 
+  const handleApiTest = useCallback(async () => {
+    if (isTestingApi) return;
+    setIsTestingApi(true);
+    try {
+      const chatUrl = getApiUrl("/api/chat");
+      const idUrl = getApiUrl("/api/identify-plant");
+      const [chatRes, idRes] = await Promise.all([
+        fetch(chatUrl, { method: "GET" }),
+        fetch(idUrl, { method: "GET" })
+      ]);
+
+      const chatText = await chatRes.text().catch(() => "");
+      const idText = await idRes.text().catch(() => "");
+
+      const report = [
+        "【API 測試結果】",
+        `- /api/chat: HTTP ${chatRes.status}`,
+        chatText ? `  回應：${chatText.slice(0, 300)}` : "  回應：<empty>",
+        `- /api/identify-plant: HTTP ${idRes.status}`,
+        idText ? `  回應：${idText.slice(0, 300)}` : "  回應：<empty>"
+      ].join("\n");
+
+      onMessagesChange((m) => [...m, { role: "assistant", text: report }]);
+    } catch (e: any) {
+      onMessagesChange((m) => [
+        ...m,
+        { role: "assistant", text: `【API 測試失敗】${String(e)}` }
+      ]);
+    } finally {
+      setIsTestingApi(false);
+    }
+  }, [isTestingApi, onMessagesChange]);
+
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <div ref={listRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
@@ -193,6 +228,14 @@ ${contextInfo}`,
             placeholder="詢問栽培與照護，例如：怎麼種大蒜？"
             className="flex-1 min-w-0 bg-transparent outline-none text-foreground placeholder:text-gray-600/60"
           />
+          <button
+            type="button"
+            onClick={handleApiTest}
+            className="shrink-0 px-3 py-2 rounded-xl bg-foreground/10 text-foreground hover:bg-foreground/20 transition-colors text-xs font-bold"
+            disabled={isTestingApi}
+          >
+            {isTestingApi ? "測試中" : "API測試"}
+          </button>
           <button
             type="submit"
             className="shrink-0 px-4 py-2 rounded-xl bg-foreground/10 text-foreground hover:bg-foreground/20 transition-colors"
